@@ -124,8 +124,9 @@ Every intent includes step-by-step guidance:
 
 ## 🌐 URLs
 
-- **Live App**: https://3000-iv45i4viageqmat5i8o31-8f57ffe2.sandbox.novita.ai
-- **Health Check**: https://3000-iv45i4viageqmat5i8o31-8f57ffe2.sandbox.novita.ai/api/health
+- **Production (Cloudflare Pages)**: https://intentiq-6mp.pages.dev
+- **GitHub Repo**: https://github.com/mkbrown261/intentiq
+- **Health Check**: https://intentiq-6mp.pages.dev/api/health
 
 ---
 
