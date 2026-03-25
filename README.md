@@ -1,163 +1,119 @@
-# IntentIQ OS — AI Business Operating System v4.0
+# IntentIQ OS — AI Business Operating System v5.0
 
 ## Project Overview
-**IntentIQ OS** is an AI-powered business operating system for e-commerce operators. It uses a multi-agent architecture where AI agents generate structured **INTENT recommendations** that require explicit human approval before any action is taken.
+- **Name**: IntentIQ OS
+- **Goal**: Platform-owned AI business advisor for e-commerce. Generates intents (recommendations) that require human approval before execution. No actions are automatic.
+- **Architecture**: Agents → Intent Layer → Human Approval → Action Layer
+- **Safe Mode**: Always on. Nothing executes without your approval.
 
-**Architecture Rule:** `Agents → Intent Layer → Human Approval → Action Layer`  
-All AI outputs are INTENTS. Nothing executes without your click.
-
----
-
-## Live URLs
-| Environment | URL |
-|-------------|-----|
-| **Production (Cloudflare Pages)** | https://intentiq-6mp.pages.dev |
-| **Sandbox Preview** | https://3000-iv45i4viageqmat5i8o31-8f57ffe2.sandbox.novita.ai |
-| **GitHub Repository** | https://github.com/mkbrown261/intentiq |
-
----
-
-## What's In v4.0
-
-### New in This Version
-- **Platform-Owned AI** — OpenAI & Anthropic keys owned by the platform; users never set up API keys
-- **Token Economy** — Monthly token allowance per user; deducted per AI request; tracked in D1
-- **Subscription Tiers** — Free (10K), Starter (50K), Pro (200K), Enterprise (1M) tokens/month
-- **D1 Database** — Full Cloudflare D1 SQLite with 12 tables: users, sessions, plans, subscriptions, token_ledger, token_usage, intents, workflows, schedules, approvals, chat_messages, agent_logs
-- **User Auth** — Register/Login/Session via D1 (extensible to bcrypt in production)
-- **5-Step Onboarding** — Business setup flow → auto-generates first AI intent on completion
-- **Chat Assistant** — Corner bubble chat UI; token-aware; demo replies without API keys
-- **Token Gating** — Intent generation checks token budget before calling AI
-- **Profit Protection** — 80% usage cap to protect platform margins
-
-### Previously in v3.0
-- 7 specialized AI agents (Market, Pricing, Inventory, Email, Product, Health, Strategy)
-- 21 intent types with full structured fields
-- Workflow Engine with multi-step agent chains
-- Scheduling System with recurring tasks (daily/weekly/monthly/quarterly)
-- Full Guided UI (Today's Priorities, Intent Queue, Agent Control, Health Dashboard)
-- Human Verification Layer (Approve / Modify / Reject)
-
----
-
-## Architecture
-
-```
-User → Onboarding → Business Profile
-         ↓
-    AI Agent (selects best model via Platform AI)
-         ↓
-    Intent Generated (structured JSON)
-         ↓
-    Token Deducted from User Ledger
-         ↓
-    Intent Queue (status: pending)
-         ↓
-    Human Reviews: Approve / Modify / Reject
-         ↓
-    [If Approved] → Human executes manually
-                    NO automatic actions
-```
-
----
-
-## Technology Stack
-- **Backend:** Hono on Cloudflare Workers
-- **Database:** Cloudflare D1 (SQLite)
-- **AI:** Platform-managed Claude + OpenAI (via centralized `src/lib/platform.ts`)
-- **Frontend:** Vanilla JS + Tailwind CDN + Font Awesome
-- **Auth:** Session tokens stored in D1
-- **Deploy:** Cloudflare Pages
-- **Dev:** wrangler pages dev + PM2
-
----
+## URLs
+- **Production**: https://intentiq-6mp.pages.dev (also https://7ff37801.intentiq-6mp.pages.dev)
+- **GitHub**: https://github.com/mkbrown261/intentiq
+- **Health Check**: https://intentiq-6mp.pages.dev/api/health
 
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | System health + version |
-| POST | `/api/auth/register` | Register new user |
-| POST | `/api/auth/login` | Login + get session token |
-| GET | `/api/auth/me` | Current user + token status |
-| GET | `/api/auth/plans` | All subscription plans |
-| GET | `/api/onboarding/status` | Onboarding completion status |
-| POST | `/api/onboarding/complete` | Complete onboarding + get first intent |
-| POST | `/api/intents/generate` | Generate AI intent (token-gated) |
-| GET | `/api/intents` | List intents (filters: status, type, agent) |
-| PATCH | `/api/intents/:id` | Approve/Reject/Modify intent |
-| GET | `/api/intents/stats` | Dashboard statistics |
-| POST | `/api/chat/message` | Chat with AI assistant (token-deducted) |
-| GET | `/api/chat/tokens` | Current token usage |
-| GET | `/api/agents` | List all agents |
-| GET | `/api/workflows` | List workflows |
-| POST | `/api/workflows/:id/run-step` | Execute next workflow step |
-| GET | `/api/schedules` | List schedules |
-| POST | `/api/schedules/run-due` | Run all due scheduled tasks |
-| GET | `/api/business/health-score` | Business health score |
-| GET | `/api/business/insights` | Business insights |
+### Auth
+- `POST /api/auth/register` — Create account
+- `POST /api/auth/login` — Login
+- `GET  /api/auth/me` — Current user + token status
+- `POST /api/auth/logout` — Logout
 
----
+### Intents
+- `GET  /api/intents` — List intents (filter: status, type, agent, priority)
+- `POST /api/intents/generate` — Generate AI intent (token-gated)
+- `PATCH /api/intents/:id` — Approve/reject/modify intent
+- `DELETE /api/intents/:id` — Delete intent
 
-## Subscription Plans
+### Chat
+- `POST /api/chat/message` — Send chat message (500 tokens/msg)
+- `GET  /api/chat/tokens` — Token status for current user
+- `GET  /api/chat/history` — Chat history
 
-| Plan | Tokens/Month | Chat | Agents | Price |
-|------|-------------|------|--------|-------|
-| Free | 10,000 | ❌ | 2 | $0 |
-| Starter | 50,000 | ✅ | 5 | $29/mo |
-| Pro | 200,000 | ✅ | 7 | $79/mo |
-| Enterprise | 1,000,000 | ✅ | 7 | $299/mo |
+### Admin (platform owner)
+- `GET  /api/admin/profit` — Profit dashboard (revenue, cost, margin per user)
+- `GET  /api/admin/stats` — Platform stats (users, MRR, token usage)
+- `GET  /api/admin/abuse` — Active abuse flags
+- `GET  /api/admin/users` — User list with subscription status
+- `GET  /api/admin/usage-breakdown` — Per-feature AI cost breakdown
+- `DELETE /api/admin/cache` — Clear expired response cache
 
----
+### Schedules
+- `POST /api/schedules` — Create recurring AI task
+- `POST /api/schedules/:id/run` — Manual run (token-gated)
+- `POST /api/schedules/run-due` — Process all due tasks (token-gated)
+
+## Subscription Tiers
+
+| Tier    | Price  | Monthly Tokens | Daily Tokens | Agents | Scheduling |
+|---------|--------|---------------|--------------|--------|------------|
+| Free    | $0     | 10,000        | 2,000        | 2      | No         |
+| Starter | $10/mo | 1,200,000     | 40,000       | 5      | Yes        |
+| Pro     | $30/mo | 3,600,000     | 120,000      | 7      | Yes + Advanced |
+| Scale   | $100/mo| 12,000,000    | 400,000      | 7      | Yes + Advanced |
+
+## Token Economy
+- **Baseline**: $0.0025 per 1,000 tokens (platform cost)
+- **Intent Generation**: 2,000 tokens
+- **Chat Message**: 500 tokens
+- **Schedule Run**: 2,000 tokens
+- **80% profit buffer**: Only 80% of monthly tokens are spendable
+- **Daily cap**: Enforced per plan; resets midnight UTC
+
+## Anti-Abuse System
+- Bot user-agent detection
+- Rate limiting (>20 req/min → throttle)
+- Duplicate request detection (same hash >5x/hour)
+- Cooldown periods between requests per plan
+- Auto-flagging with severity levels: `warning` → `throttled` → `banned`
+- Admin can resolve or ban users via `/api/admin/abuse`
+
+## Profit Tracking
+- Per-user cost tracked in `profit_tracking` table
+- Actual AI token costs logged in `token_usage` table
+- Admin dashboard shows: total revenue, total cost, profit margin, per-user P&L
+- High-cost user alerts (unprofitable users flagged automatically)
+
+## Data Architecture
+### Database: Cloudflare D1 (intentiq-production)
+**Tables**: users, sessions, plans, subscriptions, token_ledger, token_usage,
+daily_token_usage, request_log, abuse_flags, cooldowns, profit_tracking,
+response_cache, chat_messages, onboarding, user_profiles
+
+### In-Memory Stores (Agents/Intents)
+Agents, Intents, Workflows, Schedules, Business Profile, Health Score, Insights,
+AgentLogs — all in-memory Maps with seed data.
+
+## AI Service Layer
+- All AI calls route through `src/lib/platform.ts`
+- Platform-owned keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) — users never see these
+- Model routing: Claude for analysis/intent, GPT-4o-mini for chat (cheapest viable)
+- Token compression: trims prompts to <3,000 chars
+- Response cache: 1h TTL (6h for market data)
+- Demo fallback: works without any API key with realistic mock data
 
 ## Deployment
+- **Platform**: Cloudflare Pages
+- **Status**: ✅ Active — v5.0.0
+- **DB**: intentiq-production (D1, aed205f4-2693-48a5-b2e2-0b83cd54859f)
+- **Migrations**: 0001–0004 applied (local + remote)
+- **Tech Stack**: Hono + TypeScript + TailwindCSS + Cloudflare D1
+- **Last Updated**: 2026-03-25
 
-### Local Development
-```bash
-npm run build
-pm2 start ecosystem.config.cjs
-# Uses D1 local SQLite automatically
-```
+## User Guide
+1. **Login**: Use `demo@intentiq.com` / `demo1234` or register
+2. **Review Today's Priorities**: AI agents generate pending intents automatically
+3. **Approve/Reject Intents**: Click any intent card to review and decide
+4. **Generate Intent**: Click "Generate" → pick agent + intent type → review
+5. **Chat Assistant**: Corner bubble (💬) — ask questions about your business
+6. **My Usage**: View token consumption, daily limits, plan comparison
+7. **Admin Panel**: Platform owners see profit dashboard + abuse monitoring
 
-### Apply Migrations
-```bash
-# Local
-npx wrangler d1 migrations apply intentiq-production --local
-# Production
-npx wrangler d1 migrations apply intentiq-production --remote
-```
-
-### Deploy to Production
-```bash
-npm run build
-npx wrangler pages deploy dist --project-name intentiq
-```
-
-### Set AI API Keys (Required for Real AI)
-```bash
-npx wrangler pages secret put ANTHROPIC_API_KEY --project-name intentiq
-npx wrangler pages secret put OPENAI_API_KEY --project-name intentiq
-```
-
----
-
-## Required User Actions Before Go-Live
-
-1. **Anthropic API Key** — Create account at anthropic.com, get API key, set as Cloudflare secret
-2. **OpenAI API Key** — Create account at openai.com, get API key, set as Cloudflare secret
-3. **Stripe Setup** (for subscriptions) — Integrate Stripe webhook → update `subscriptions` table
-4. **Custom Domain** — `npx wrangler pages domain add yourdomain.com --project-name intentiq`
-5. **JWT Secret** — Set strong secret: `npx wrangler pages secret put JWT_SECRET --project-name intentiq`
-6. **Password Hashing** — Replace demo hash in `src/lib/auth.ts` with bcrypt (install `bcryptjs`)
-
----
-
-## Safety Enforcement
-- `requiresApproval: true` is hardcoded on every intent object
-- No financial transactions, pricing changes, email sends, or external API calls execute automatically
-- All AI keys are platform-owned and never exposed to users
-- Token budget enforced server-side with 80% profit buffer
-
----
-
-**Last Updated:** 2026-03-25 | **Version:** 4.0.0 | **Status:** ✅ Live
+## Required User Actions (for production)
+1. `npx wrangler pages secret put ANTHROPIC_API_KEY --project-name intentiq`
+2. `npx wrangler pages secret put OPENAI_API_KEY --project-name intentiq`
+3. `npx wrangler pages secret put JWT_SECRET --project-name intentiq`
+4. `npx wrangler pages secret put ADMIN_SECRET --project-name intentiq`
+5. Set up Stripe and implement `/api/webhooks/stripe` for real billing
+6. Replace XOR password hash with `@node-rs/bcrypt` in `src/lib/auth.ts`
+7. Configure email service (Resend/SendGrid) for auth emails
