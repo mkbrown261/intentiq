@@ -1357,106 +1357,99 @@ async function renderSchedules() {
   const planName = S.tokens?.planName || 'free';
   const hasScheduling = ['starter','pro','scale'].includes(planName);
 
-  document.getElementById('content').innerHTML = `
-    <div class="flex items-center justify-between mb-4">
-      <div class="text-sm text-gray-500">Schedules automatically generate intents for your review — nothing executes automatically.</div>
-      ${hasScheduling
-        ? `<button onclick="openCreateSchedule()" class="bg-violet-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-violet-700 transition-colors"><i class="fas fa-plus mr-1.5"></i>New Schedule</button>`
-        : `<button onclick="triggerFeatureLock('scheduling')" class="bg-gray-100 text-gray-500 text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-gray-200 transition-colors"><i class="fas fa-lock mr-1.5"></i>Unlock Scheduling</button>`
-      }
-    </div>
+  // ── Header ─────────────────────────────────────────────────────
+  const addBtn = hasScheduling
+    ? `<button onclick="openCreateSchedule()" class="bg-violet-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-violet-700 transition-colors"><i class="fas fa-plus mr-1.5"></i>New Schedule</button>`
+    : `<button onclick="triggerFeatureLock('scheduling')" class="bg-gray-100 text-gray-500 text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-gray-200 transition-colors"><i class="fas fa-lock mr-1.5"></i>Unlock Scheduling</button>`;
 
-    <!-- Locked feature gate for free plan -->
-    ${!hasScheduling ? `
-      <div class="relative rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/40 overflow-hidden mb-5">
-        <!-- Blurred preview rows -->
-        <div class="p-5 filter blur-[3px] pointer-events-none select-none opacity-30">
-          <div class="grid grid-cols-2 gap-3">
-            ${[['Daily Inventory Check','daily','emerald'],['Weekly Pricing Analysis','weekly','blue'],['Monthly Health Report','monthly','amber'],['Market Trend Scan','weekly','violet']].map(([n,f,c])=>`
-              <div class="bg-white rounded-2xl border border-gray-100 p-4">
-                <div class="flex items-center gap-2 mb-2"><span class="font-bold text-gray-700 text-sm">${n}</span><span class="text-[10px] px-2 py-0.5 rounded-full bg-${c}-100 text-${c}-600">${f}</span></div>
-                <div class="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-2"><div><div class="text-sm font-bold">12</div><div class="text-[10px] text-gray-400">Runs</div></div><div><div class="text-sm font-bold">36</div><div class="text-[10px] text-gray-400">Intents</div></div><div><div class="text-sm font-bold">9:00 AM</div><div class="text-[10px] text-gray-400">Time</div></div></div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-        <!-- Lock overlay -->
-        <div class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
-          <div class="w-14 h-14 rounded-2xl bg-white shadow-md flex items-center justify-center mb-3">
-            <i class="fas fa-calendar-alt text-violet-500 text-xl"></i>
-          </div>
-          <div class="font-bold text-gray-800 text-lg mb-1">Automated Scheduling</div>
-          <div class="text-sm text-gray-500 max-w-xs mb-1">Set AI agents to run on autopilot — daily, weekly, or monthly. Generate insights while you sleep.</div>
-          <div class="text-xs text-violet-600 font-semibold mb-4">✨ Saves 2–3 hours/week · Never miss a market shift</div>
-          <button onclick="triggerFeatureLock('scheduling')"
-            class="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors shadow-sm">
-            <i class="fas fa-lock-open mr-2"></i>Unlock with Starter · $10/mo
-          </button>
-          <p class="text-xs text-gray-400 mt-2">Upgrade to see your scheduled agents working 24/7</p>
-        </div>
-      </div>
-    ` : ''}`
+  const header = `<div class="flex items-center justify-between mb-4">
+    <div class="text-sm text-gray-500">Schedules automatically generate intents for your review — nothing executes automatically.</div>
+    ${addBtn}
+  </div>`;
 
-    ${hasScheduling ? `
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-      ${S.schedules.length===0 ? `
-        <div class="col-span-2 bg-white rounded-2xl border border-gray-100 p-12 text-center">
-          <i class="fas fa-calendar-alt text-4xl text-gray-200 mb-3 block"></i>
-          <div class="text-gray-500 font-semibold">No schedules yet</div>
-          <button onclick="openCreateSchedule()" class="mt-4 bg-violet-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-violet-700">
-            <i class="fas fa-plus mr-2"></i>Create First Schedule
-          </button>
-        </div>
-      ` : S.schedules.map(s=>`
-        <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
-          <div class="p-4">
-            <div class="flex items-start justify-between mb-3">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 flex-wrap mb-1">
-                  <span class="font-bold text-gray-800 text-sm">${esc(s.name)}</span>
-                  <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-${freqColor[s.frequency]||'gray'}-100 text-${freqColor[s.frequency]||'gray'}-600">${s.frequency}</span>
-                  <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold ${s.isActive?'bg-emerald-100 text-emerald-600':'bg-gray-100 text-gray-400'}">
-                    ${s.isActive?'Active':'Paused'}
-                  </span>
-                </div>
-                <div class="text-xs text-gray-400">${esc(s.description)}</div>
-              </div>
-              <div class="flex gap-1 shrink-0 ml-2">
-                <button onclick="runSchedule('${s.id}')" title="Run Now" class="w-8 h-8 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center hover:bg-violet-100 transition-colors text-xs">
-                  <i class="fas fa-play"></i>
-                </button>
-                <button onclick="toggleSchedule('${s.id}',${!s.isActive})" title="${s.isActive?'Pause':'Enable'}" class="w-8 h-8 rounded-xl ${s.isActive?'bg-amber-50 text-amber-600':'bg-emerald-50 text-emerald-600'} flex items-center justify-center hover:opacity-80 transition-opacity text-xs">
-                  <i class="fas ${s.isActive?'fa-pause':'fa-play-circle'}"></i>
-                </button>
-                <button onclick="deleteSchedule('${s.id}')" class="w-8 h-8 rounded-xl bg-red-50 text-red-400 flex items-center justify-center hover:bg-red-100 transition-colors text-xs">
-                  <i class="fas fa-trash"></i>
-                </button>
-              </div>
-            </div>
-            <div class="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-3 mb-3">
-              <div><div class="text-sm font-bold text-gray-700">${s.totalRuns||0}</div><div class="text-[10px] text-gray-400">Runs</div></div>
-              <div><div class="text-sm font-bold text-gray-700">${s.intentsGenerated||0}</div><div class="text-[10px] text-gray-400">Intents</div></div>
-              <div><div class="text-sm font-bold text-gray-700">${s.hour!=null?formatHour(s.hour):'—'}</div><div class="text-[10px] text-gray-400">Time</div></div>
-            </div>
-            <div class="flex items-center justify-between text-xs text-gray-400">
-              <span><i class="fas fa-history mr-1"></i>Last: ${s.lastRun?ago(s.lastRun):'Never'}</span>
-              <span><i class="fas fa-clock mr-1"></i>Next: ${fmtDateShort(s.nextRun)}</span>
-            </div>
-            ${s.agentName ? `
-              <div class="mt-2 flex items-center gap-1.5">
-                <div class="w-5 h-5 rounded bg-${AGENT_COLORS[s.agentName]||'gray'}-100 flex items-center justify-center">
-                  <i class="fas ${AGENT_ICONS[s.agentName]||'fa-robot'} text-${AGENT_COLORS[s.agentName]||'gray'}-600 text-[9px]"></i>
-                </div>
-                <span class="text-[10px] text-gray-500">${s.agentName.replace('Agent',' Agent')}</span>
-              </div>
-            ` : ''}
-          </div>
-        </div>
-      `).join('')}
-    </div>
-    ` : ''}
-  `;
+  // ── Locked card (free plan only) ───────────────────────────────
+  const previewRows = [
+    ['Daily Inventory Check','daily','emerald'],
+    ['Weekly Pricing Analysis','weekly','blue'],
+    ['Monthly Health Report','monthly','amber'],
+    ['Market Trend Scan','weekly','violet']
+  ].map(function(item) {
+    var n=item[0], f=item[1], c=item[2];
+    return '<div class="bg-white rounded-2xl border border-gray-100 p-4">'
+      + '<div class="flex items-center gap-2 mb-2"><span class="font-bold text-gray-700 text-sm">'+n+'</span>'
+      + '<span class="text-[10px] px-2 py-0.5 rounded-full bg-'+c+'-100 text-'+c+'-600">'+f+'</span></div>'
+      + '<div class="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-2">'
+      + '<div><div class="text-sm font-bold">12</div><div class="text-[10px] text-gray-400">Runs</div></div>'
+      + '<div><div class="text-sm font-bold">36</div><div class="text-[10px] text-gray-400">Intents</div></div>'
+      + '<div><div class="text-sm font-bold">9:00 AM</div><div class="text-[10px] text-gray-400">Time</div></div>'
+      + '</div></div>';
+  }).join('');
+
+  const lockedCard = !hasScheduling ? (
+    '<div class="relative rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/40 overflow-hidden mb-5">'
+    + '<div class="p-5 filter blur-sm pointer-events-none select-none opacity-30">'
+    + '<div class="grid grid-cols-2 gap-3">' + previewRows + '</div></div>'
+    + '<div class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">'
+    + '<div class="w-14 h-14 rounded-2xl bg-white shadow-md flex items-center justify-center mb-3">'
+    + '<i class="fas fa-calendar-alt text-violet-500 text-xl"></i></div>'
+    + '<div class="font-bold text-gray-800 text-lg mb-1">Automated Scheduling</div>'
+    + '<div class="text-sm text-gray-500 max-w-xs mb-1">Set AI agents to run on autopilot — daily, weekly, or monthly. Generate insights while you sleep.</div>'
+    + '<div class="text-xs text-violet-600 font-semibold mb-4">✨ Saves 2–3 hours/week · Never miss a market shift</div>'
+    + '<button onclick="triggerFeatureLock(\'scheduling\')" class="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors shadow-sm">'
+    + '<i class="fas fa-lock-open mr-2"></i>Unlock with Starter · $10/mo</button>'
+    + '<p class="text-xs text-gray-400 mt-2">Upgrade to see your scheduled agents working 24/7</p>'
+    + '</div></div>'
+  ) : '';
+
+  // ── Schedule grid (paid plans) ─────────────────────────────────
+  let schedGrid = '';
+  if (hasScheduling) {
+    if (S.schedules.length === 0) {
+      schedGrid = '<div class="col-span-2 bg-white rounded-2xl border border-gray-100 p-12 text-center">'
+        + '<i class="fas fa-calendar-alt text-4xl text-gray-200 mb-3 block"></i>'
+        + '<div class="text-gray-500 font-semibold">No schedules yet</div>'
+        + '<button onclick="openCreateSchedule()" class="mt-4 bg-violet-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-violet-700">'
+        + '<i class="fas fa-plus mr-2"></i>Create First Schedule</button></div>';
+    } else {
+      schedGrid = S.schedules.map(function(s) {
+        const fc = freqColor[s.frequency] || 'gray';
+        const agentBadge = s.agentName
+          ? '<div class="mt-2 flex items-center gap-1.5">'
+            + '<div class="w-5 h-5 rounded bg-'+(AGENT_COLORS[s.agentName]||'gray')+'-100 flex items-center justify-center">'
+            + '<i class="fas '+(AGENT_ICONS[s.agentName]||'fa-robot')+' text-'+(AGENT_COLORS[s.agentName]||'gray')+'-600 text-[9px]"></i></div>'
+            + '<span class="text-[10px] text-gray-500">'+s.agentName.replace('Agent',' Agent')+'</span></div>'
+          : '';
+        return '<div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden"><div class="p-4">'
+          + '<div class="flex items-start justify-between mb-3">'
+          + '<div class="flex-1 min-w-0">'
+          + '<div class="flex items-center gap-2 flex-wrap mb-1">'
+          + '<span class="font-bold text-gray-800 text-sm">'+esc(s.name)+'</span>'
+          + '<span class="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-'+fc+'-100 text-'+fc+'-600">'+s.frequency+'</span>'
+          + '<span class="text-[10px] px-2 py-0.5 rounded-full font-semibold '+(s.isActive?'bg-emerald-100 text-emerald-600':'bg-gray-100 text-gray-400')+'">'+(s.isActive?'Active':'Paused')+'</span>'
+          + '</div><div class="text-xs text-gray-400">'+esc(s.description)+'</div></div>'
+          + '<div class="flex gap-1 shrink-0 ml-2">'
+          + '<button onclick="runSchedule(\''+s.id+'\')" title="Run Now" class="w-8 h-8 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center hover:bg-violet-100 transition-colors text-xs"><i class="fas fa-play"></i></button>'
+          + '<button onclick="toggleSchedule(\''+s.id+'\','+(!s.isActive)+')" title="'+(s.isActive?'Pause':'Enable')+'" class="w-8 h-8 rounded-xl '+(s.isActive?'bg-amber-50 text-amber-600':'bg-emerald-50 text-emerald-600')+' flex items-center justify-center hover:opacity-80 transition-opacity text-xs"><i class="fas '+(s.isActive?'fa-pause':'fa-play-circle')+'"></i></button>'
+          + '<button onclick="deleteSchedule(\''+s.id+'\')" class="w-8 h-8 rounded-xl bg-red-50 text-red-400 flex items-center justify-center hover:bg-red-100 transition-colors text-xs"><i class="fas fa-trash"></i></button>'
+          + '</div></div>'
+          + '<div class="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-3 mb-3">'
+          + '<div><div class="text-sm font-bold text-gray-700">'+(s.totalRuns||0)+'</div><div class="text-[10px] text-gray-400">Runs</div></div>'
+          + '<div><div class="text-sm font-bold text-gray-700">'+(s.intentsGenerated||0)+'</div><div class="text-[10px] text-gray-400">Intents</div></div>'
+          + '<div><div class="text-sm font-bold text-gray-700">'+(s.hour!=null?formatHour(s.hour):'—')+'</div><div class="text-[10px] text-gray-400">Time</div></div>'
+          + '</div>'
+          + '<div class="flex items-center justify-between text-xs text-gray-400">'
+          + '<span><i class="fas fa-history mr-1"></i>Last: '+(s.lastRun?ago(s.lastRun):'Never')+'</span>'
+          + '<span><i class="fas fa-clock mr-1"></i>Next: '+fmtDateShort(s.nextRun)+'</span></div>'
+          + agentBadge
+          + '</div></div>';
+      }).join('');
+    }
+    schedGrid = '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' + schedGrid + '</div>';
+  }
+
+  document.getElementById('content').innerHTML = header + lockedCard + schedGrid;
 }
+
 
 function formatHour(h) { const ampm = h<12?'AM':'PM'; return (h%12||12)+':00 '+ampm; }
 
@@ -2206,19 +2199,6 @@ function renderLockedFeatureCard(featureKey) {
     </div>
   `;
 }
-
-function triggerFeatureLock(featureKey) {
-  api.post('/upgrade/feature-lock', {
-    featureKey,
-    planName: S.tokens?.planName || 'free'
-  }).then(r => {
-    if (r.success && r.data?.trigger) {
-      showUpgradeModal(r.data.trigger);
-    }
-  }).catch(()=>{});
-}
-window.triggerFeatureLock = triggerFeatureLock;
-window.renderLockedFeatureCard = renderLockedFeatureCard;
 
 // ================================================================
 // VALUE MOMENT — After high-value intent generated
@@ -3256,17 +3236,6 @@ async function checkUpgradeTriggers() {
   } catch(_) {} // Never block the UI
 }
 
-// Call after intent generation to check value_moment
-async function checkValueMoment(intentType) {
-  try {
-    const planName = S.tokens?.planName || 'free';
-    const r = await api.post('/upgrade/intent-value', { intentType, planName });
-    if (r.success && r.data?.shouldShow && r.data?.trigger) {
-      // Small delay so intent renders first
-      setTimeout(() => showTriggerBanner(r.data.trigger), 1500);
-    }
-  } catch(_) {}
-}
 
 // ================================================================
 // MY USAGE DASHBOARD
