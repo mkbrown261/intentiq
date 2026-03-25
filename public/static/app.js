@@ -1,1004 +1,1598 @@
-// ============================================================
-// IntentIQ — Frontend Application
-// ============================================================
-// ARCHITECTURAL RULE:
-//   This UI ONLY reads intents and submits approval/rejection.
-//   It NEVER executes actions directly.
-//   ALL intent actions flow through /api/intents/:id (PATCH).
-// ============================================================
-
+// ================================================================
+// IntentIQ OS — AI Business Operating System
+// Frontend v3.0 — Full Guided UI
+// ================================================================
 'use strict';
 
-// ── State ────────────────────────────────────────────────────
-const State = {
-  currentPage: 'dashboard',
+// ── State ─────────────────────────────────────────────────────────
+const S = {
+  page: 'today',
   intents: [],
+  agents: [],
+  workflows: [],
   schedules: [],
   profile: null,
+  health: null,
   stats: null,
+  insights: [],
+  logs: [],
   generating: false,
-  pollingInterval: null,
-  apiKeys: { anthropic: false, openai: false }
+  intentFilter: 'all',
+  intentSearch: ''
 };
 
-// ── API Client ───────────────────────────────────────────────
-const API = {
-  async get(path) {
-    const r = await fetch(`/api${path}`);
-    return r.json();
-  },
-  async post(path, body) {
-    const r = await fetch(`/api${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    return r.json();
-  },
-  async patch(path, body) {
-    const r = await fetch(`/api${path}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    return r.json();
-  },
-  async delete(path) {
-    const r = await fetch(`/api${path}`, { method: 'DELETE' });
-    return r.json();
-  }
+// ── API ───────────────────────────────────────────────────────────
+const api = {
+  get:   async p => { const r = await fetch('/api'+p); return r.json(); },
+  post:  async (p,b) => { const r = await fetch('/api'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },
+  patch: async (p,b) => { const r = await fetch('/api'+p,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },
+  del:   async p => { const r = await fetch('/api'+p,{method:'DELETE'}); return r.json(); }
 };
 
-// ── Toast ────────────────────────────────────────────────────
-function toast(message, type = 'success') {
-  const colors = {
-    success: 'bg-emerald-600 text-white',
-    error: 'bg-red-600 text-white',
-    info: 'bg-violet-600 text-white',
-    warning: 'bg-amber-500 text-white'
-  };
-  const icons = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' };
+// ── Toast ─────────────────────────────────────────────────────────
+const TOAST_CFG = {success:'bg-emerald-600',error:'bg-red-600',info:'bg-violet-600',warning:'bg-amber-500'};
+const TOAST_ICO = {success:'fa-check-circle',error:'fa-times-circle',info:'fa-info-circle',warning:'fa-exclamation-triangle'};
+function toast(msg, type='success') {
   const el = document.createElement('div');
-  el.className = `toast flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${colors[type]}`;
-  el.innerHTML = `<i class="fas ${icons[type]}"></i><span>${message}</span>`;
-  document.getElementById('toast-container').appendChild(el);
-  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3000);
+  el.className = `toast flex items-center gap-2.5 text-white px-4 py-3 rounded-xl shadow-2xl text-sm font-medium ${TOAST_CFG[type]||TOAST_CFG.info} border border-white/20`;
+  el.innerHTML = `<i class="fas ${TOAST_ICO[type]||TOAST_ICO.info} shrink-0"></i><span>${msg}</span>`;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateX(20px)'; el.style.transition='all 0.3s'; setTimeout(()=>el.remove(),300); }, 3500);
 }
 
-// ── Navigation ───────────────────────────────────────────────
-function navigate(page) {
-  State.currentPage = page;
-  document.querySelectorAll('[data-nav]').forEach(el => {
-    el.classList.toggle('active', el.dataset.nav === page);
-    el.classList.toggle('text-white/90', el.dataset.nav === page);
-    el.classList.toggle('text-white/70', el.dataset.nav !== page);
+// ── Helpers ───────────────────────────────────────────────────────
+function ago(iso) {
+  const d = Date.now()-new Date(iso).getTime(), m = Math.floor(d/60000);
+  if(m<1) return 'Just now'; if(m<60) return m+'m ago';
+  const h = Math.floor(m/60); if(h<24) return h+'h ago';
+  return Math.floor(h/24)+'d ago';
+}
+function fmtDate(iso) { if(!iso) return 'N/A'; return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
+function fmtDateShort(iso) { if(!iso) return 'N/A'; return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+function fmtType(t) { return (t||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()); }
+function getGreeting() { const h=new Date().getHours(); return h<12?'morning':h<17?'afternoon':'evening'; }
+function clamp(n,min,max) { return Math.max(min,Math.min(max,n)); }
+function esc(s) { return String(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── Icon / Color Maps ─────────────────────────────────────────────
+const INTENT_ICONS={
+  inventory_restock:'fa-boxes',inventory_liquidate:'fa-dumpster',
+  pricing_adjust:'fa-tags',pricing_bundle:'fa-gift',pricing_discount:'fa-percent',
+  market_trend:'fa-chart-line',market_opportunity:'fa-gem',competitor_alert:'fa-search',
+  email_campaign:'fa-envelope',email_abandoned_cart:'fa-shopping-cart',email_reengagement:'fa-redo',
+  product_create:'fa-lightbulb',product_bundle:'fa-gift',product_variation:'fa-palette',
+  workflow_suggestion:'fa-project-diagram',business_health:'fa-heartbeat',performance_alert:'fa-tachometer-alt',
+  seasonality_alert:'fa-calendar-star',customer_segment:'fa-users',ad_optimization:'fa-bullhorn',
+  financial_insight:'fa-dollar-sign',strategy_review:'fa-chess'
+};
+const INTENT_BG={
+  inventory_restock:'bg-emerald-100',inventory_liquidate:'bg-teal-100',
+  pricing_adjust:'bg-amber-100',pricing_bundle:'bg-yellow-100',pricing_discount:'bg-orange-100',
+  market_trend:'bg-violet-100',market_opportunity:'bg-purple-100',competitor_alert:'bg-blue-100',
+  email_campaign:'bg-pink-100',email_abandoned_cart:'bg-rose-100',email_reengagement:'bg-fuchsia-100',
+  product_create:'bg-yellow-100',product_bundle:'bg-lime-100',product_variation:'bg-cyan-100',
+  business_health:'bg-red-100',performance_alert:'bg-orange-100',strategy_review:'bg-indigo-100',
+  customer_segment:'bg-sky-100',financial_insight:'bg-green-100',ad_optimization:'bg-pink-100',
+  workflow_suggestion:'bg-slate-100',seasonality_alert:'bg-amber-100'
+};
+const INTENT_IC={
+  inventory_restock:'text-emerald-600',inventory_liquidate:'text-teal-600',
+  pricing_adjust:'text-amber-600',pricing_bundle:'text-yellow-600',pricing_discount:'text-orange-600',
+  market_trend:'text-violet-600',market_opportunity:'text-purple-600',competitor_alert:'text-blue-600',
+  email_campaign:'text-pink-600',email_abandoned_cart:'text-rose-600',email_reengagement:'text-fuchsia-600',
+  product_create:'text-yellow-600',product_bundle:'text-lime-600',product_variation:'text-cyan-600',
+  business_health:'text-red-600',performance_alert:'text-orange-600',strategy_review:'text-indigo-600',
+  customer_segment:'text-sky-600',financial_insight:'text-green-600',ad_optimization:'text-pink-600',
+  workflow_suggestion:'text-slate-600',seasonality_alert:'text-amber-600'
+};
+const AGENT_COLORS={
+  MarketResearchAgent:'violet',PricingAgent:'amber',InventoryAgent:'emerald',
+  EmailMarketingAgent:'pink',ProductCreationAgent:'yellow',BusinessHealthAgent:'red',StrategyAgent:'indigo'
+};
+const AGENT_ICONS={
+  MarketResearchAgent:'fa-chart-line',PricingAgent:'fa-tags',InventoryAgent:'fa-boxes',
+  EmailMarketingAgent:'fa-envelope',ProductCreationAgent:'fa-lightbulb',BusinessHealthAgent:'fa-heartbeat',StrategyAgent:'fa-chess'
+};
+function iIcon(t){return INTENT_ICONS[t]||'fa-brain';}
+function iBg(t){return INTENT_BG[t]||'bg-gray-100';}
+function iColor(t){return INTENT_IC[t]||'text-gray-600';}
+
+const INTENT_TYPES_BY_AGENT = {
+  MarketResearchAgent: ['market_trend','market_opportunity','competitor_alert','seasonality_alert','strategy_review'],
+  PricingAgent: ['pricing_adjust','pricing_bundle','pricing_discount','financial_insight'],
+  InventoryAgent: ['inventory_restock','inventory_liquidate','performance_alert'],
+  EmailMarketingAgent: ['email_campaign','email_abandoned_cart','email_reengagement','customer_segment'],
+  ProductCreationAgent: ['product_create','product_bundle','product_variation'],
+  BusinessHealthAgent: ['business_health','performance_alert','financial_insight'],
+  StrategyAgent: ['strategy_review','workflow_suggestion','ad_optimization']
+};
+
+// ── Modal ─────────────────────────────────────────────────────────
+function openModal(html) {
+  const m = document.getElementById('modal');
+  const b = document.getElementById('modal-box');
+  b.innerHTML = html;
+  m.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+function closeModal(e) {
+  if(!e || e.target===document.getElementById('modal')) {
+    document.getElementById('modal').classList.add('hidden');
+    document.body.style.overflow = '';
+  }
+}
+window.closeModal = closeModal;
+
+// ── Navigation ────────────────────────────────────────────────────
+const PAGE_META = {
+  today:     ["Today's Priorities","Your AI-guided daily action plan — approve, modify, or reject"],
+  dashboard: ['Dashboard','Business overview, insights, and key metrics'],
+  intents:   ['Intent Queue','All AI recommendations awaiting your review'],
+  agents:    ['Agent Control Center','Manage your 7 specialized AI agents'],
+  generate:  ['Generate Intent','Ask an AI agent to analyze and recommend'],
+  workflows: ['Workflow Engine','Multi-step guided business workflows'],
+  schedules: ['Schedule Manager','Automated recurring AI analysis tasks'],
+  health:    ['Business Health Score','Complete health report across all business areas'],
+  profile:   ['Business Profile','Personalize your AI agents with your business context'],
+  logs:      ['Agent Activity Logs','See what your AI agents have been doing']
+};
+
+function nav(page) {
+  S.page = page;
+  document.querySelectorAll('[data-page]').forEach(el=>{
+    const active = el.dataset.page===page;
+    el.classList.toggle('active',active);
+    el.classList.toggle('text-white/90',active);
+    el.classList.toggle('text-white/70',!active);
   });
+  const [title,sub] = PAGE_META[page]||['Page',''];
+  document.getElementById('page-title').textContent = title;
+  document.getElementById('page-sub').textContent = sub;
+  document.getElementById('content').innerHTML = loadingHTML();
   renderPage(page);
 }
+window.nav = nav;
 
-const pageTitles = {
-  dashboard: ['Dashboard', 'AI-powered insights, your decisions'],
-  intents: ['Intent Queue', 'All AI-generated recommendations awaiting your review'],
-  generate: ['Generate Intent', 'Ask AI to analyze and generate a new recommendation'],
-  schedules: ['Schedules', 'Automate AI analysis on a recurring schedule'],
-  profile: ['Business Profile', 'Personalize AI recommendations for your business'],
-  routing: ['AI Routing', 'See how tasks are routed to Claude and OpenAI']
-};
+function loadingHTML() {
+  return `<div class="flex items-center justify-center h-48"><div class="spinner w-10 h-10"></div></div>`;
+}
 
 async function renderPage(page) {
-  const [title, subtitle] = pageTitles[page] ?? ['Page', ''];
-  document.getElementById('page-title').textContent = title;
-  document.getElementById('page-subtitle').textContent = subtitle;
-  document.getElementById('app-content').innerHTML = '<div class="flex items-center justify-center h-40"><div class="generating-spinner w-8 h-8"></div></div>';
-  await loadPageData(page);
-}
-
-async function loadPageData(page) {
   await refreshStats();
-  if (page === 'dashboard') await renderDashboard();
-  else if (page === 'intents') await renderIntentsPage();
-  else if (page === 'generate') renderGeneratePage();
-  else if (page === 'schedules') await renderSchedulesPage();
-  else if (page === 'profile') await renderProfilePage();
-  else if (page === 'routing') renderRoutingPage();
+  const map = {
+    today: renderToday, dashboard: renderDashboard,
+    intents: renderIntents, agents: renderAgents,
+    generate: renderGenerate, workflows: renderWorkflows,
+    schedules: renderSchedules, health: renderHealth,
+    profile: renderProfile, logs: renderLogs
+  };
+  if(map[page]) await map[page]();
 }
 
-// ── Stats Refresh ────────────────────────────────────────────
+// ── Stats Badge Update ────────────────────────────────────────────
 async function refreshStats() {
   try {
-    const r = await API.get('/intents/stats');
-    if (r.success) {
-      State.stats = r.data;
-      updatePendingBadge(r.data.pendingIntents);
+    const r = await api.get('/intents/stats');
+    if(r.success) {
+      S.stats = r.data;
+      const pb = document.getElementById('sb-pending');
+      const ub = document.getElementById('sb-urgent');
+      const p = r.data.pendingIntents||0, u = r.data.urgentIntents||0;
+      if(pb) { pb.textContent=p; pb.classList.toggle('hidden',p===0); }
+      if(ub) { ub.textContent=u; ub.classList.toggle('hidden',u===0); }
+      const pill = document.getElementById('ai-pill');
+      if(pill) {
+        pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block pulse-dot"></span><span class="text-emerald-600 font-medium">AI Active</span>`;
+      }
     }
-  } catch (_) {}
+  } catch(_) {}
 }
 
-function updatePendingBadge(count) {
-  const badge = document.getElementById('sidebar-pending-badge');
-  if (!badge) return;
-  if (count > 0) {
-    badge.textContent = count;
-    badge.classList.remove('hidden');
-  } else {
-    badge.classList.add('hidden');
-  }
-}
-
-// ── AI Status Check ──────────────────────────────────────────
-async function checkAIStatus() {
-  try {
-    const r = await API.get('/health');
-    const el = document.getElementById('ai-status');
-    if (el && r.status === 'ok') {
-      el.innerHTML = '<i class="fas fa-circle text-emerald-500 text-xs"></i><span class="text-emerald-600">AI System Online</span>';
-    }
-  } catch (_) {
-    const el = document.getElementById('ai-status');
-    if (el) el.innerHTML = '<i class="fas fa-circle text-amber-400 text-xs"></i><span>Demo Mode</span>';
-  }
-}
-
-// ============================================================
-// DASHBOARD
-// ============================================================
-
-async function renderDashboard() {
-  const [statsRes, intentsRes] = await Promise.all([
-    API.get('/intents/stats'),
-    API.get('/intents?limit=5')
+// ================================================================
+// TODAY'S PRIORITIES — Guided Entry Point
+// ================================================================
+async function renderToday() {
+  const [iRes,hRes,pRes,wRes] = await Promise.all([
+    api.get('/intents?status=pending&limit=30'),
+    api.get('/business/health-score'),
+    api.get('/business/profile'),
+    api.get('/workflows')
   ]);
+  S.intents  = iRes.data||[];
+  S.health   = hRes.data||{overall:72,inventory:68,pricing:74,marketing:65,products:80,operations:75,trend:'up',alerts:[]};
+  S.profile  = pRes.data||{businessName:'My Business',niche:'e-commerce'};
+  S.workflows= wRes.data||[];
 
-  const stats = statsRes.data ?? {};
-  const recent = intentsRes.data ?? [];
-  State.stats = stats;
+  const pending  = S.intents.filter(i=>i.status==='pending');
+  const urgent   = pending.filter(i=>i.priority==='urgent');
+  const high     = pending.filter(i=>i.priority==='high');
+  const rest     = pending.filter(i=>i.priority!=='urgent'&&i.priority!=='high');
+  const activeWF = S.workflows.filter(w=>w.status==='active');
+  const name     = (S.profile.businessName||'Your Business');
 
-  document.getElementById('app-content').innerHTML = `
+  document.getElementById('content').innerHTML = `
     <!-- Welcome Banner -->
-    <div class="bg-gradient-to-r from-violet-600 to-purple-700 rounded-2xl p-6 mb-6 text-white relative overflow-hidden">
-      <div class="absolute inset-0 opacity-10">
-        <div class="absolute top-2 right-8 text-9xl"><i class="fas fa-brain"></i></div>
-      </div>
-      <div class="relative">
-        <div class="flex items-center gap-2 mb-1">
-          <div class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
-          <span class="text-violet-200 text-sm font-medium">Safe Mode — No Automatic Actions</span>
+    <div class="page-header rounded-2xl p-5 mb-5 text-white relative overflow-hidden">
+      <div class="absolute right-4 top-4 opacity-[0.06] text-[120px] leading-none pointer-events-none select-none"><i class="fas fa-brain"></i></div>
+      <div class="relative z-10">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></div>
+          <span class="text-violet-300 text-xs font-medium">AI COO Active — Safe Mode Enabled</span>
         </div>
-        <h2 class="text-2xl font-bold mb-1">Your AI Commerce Brain</h2>
-        <p class="text-violet-200 text-sm max-w-xl">IntentIQ thinks, analyzes, and suggests. <strong class="text-white">You decide everything.</strong> No pricing changes, no emails, no purchases happen without your explicit approval.</p>
-        <div class="flex gap-3 mt-4">
-          <button onclick="navigate('generate')" class="btn bg-white text-violet-700 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-violet-50">
-            <i class="fas fa-magic mr-2"></i>Generate Intent
-          </button>
-          <button onclick="navigate('intents')" class="btn bg-white/20 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-white/30">
-            <i class="fas fa-layer-group mr-2"></i>View Queue
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Stats Grid -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-      ${statCard('Total Intents', stats.totalIntents ?? 0, 'fa-layer-group', 'violet')}
-      ${statCard('Pending Review', stats.pendingIntents ?? 0, 'fa-clock', 'amber', true)}
-      ${statCard('Approved Today', stats.approvedToday ?? 0, 'fa-check-circle', 'emerald')}
-      ${statCard('High Risk', stats.highRiskPending ?? 0, 'fa-exclamation-triangle', 'red')}
-    </div>
-
-    <!-- Two-column layout -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      
-      <!-- Recent Intents -->
-      <div class="lg:col-span-2">
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-gray-800">Recent Intents</h3>
-            <button onclick="navigate('intents')" class="text-violet-600 text-sm hover:underline">View all</button>
+        <h2 class="text-xl font-bold mb-1">Good ${getGreeting()}, ${name.split(' ')[0]}.</h2>
+        <p class="text-violet-200 text-sm max-w-xl">Your AI agents have been working. Here's what needs your attention today. <strong class="text-white">You approve everything before anything happens.</strong></p>
+        <div class="flex gap-2 mt-4 flex-wrap items-end">
+          <div class="bg-white/10 rounded-xl px-3 py-2 text-center min-w-[72px]">
+            <div class="text-2xl font-bold">${pending.length}</div>
+            <div class="text-violet-300 text-[10px] font-medium">Pending</div>
           </div>
-          ${recent.length === 0 
-            ? `<div class="text-center py-10 text-gray-400">
-                <i class="fas fa-inbox text-4xl mb-3 block opacity-40"></i>
-                <p class="font-medium">No intents yet</p>
-                <p class="text-sm mt-1">Generate your first AI intent to get started</p>
-                <button onclick="navigate('generate')" class="mt-4 btn bg-violet-600 text-white px-4 py-2 rounded-xl text-sm">
-                  <i class="fas fa-magic mr-2"></i>Generate Now
-                </button>
-              </div>`
-            : recent.map(i => miniIntentCard(i)).join('')
-          }
-        </div>
-      </div>
-
-      <!-- Right Column -->
-      <div class="flex flex-col gap-4">
-
-        <!-- Quick Actions -->
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-          <h3 class="font-semibold text-gray-800 mb-4">Quick Generate</h3>
-          <div class="flex flex-col gap-2">
-            ${quickActionBtn('market_analysis', 'fa-chart-line', 'Market Analysis', 'bg-violet-50 text-violet-700', 'Analyze your market trends')}
-            ${quickActionBtn('pricing_update', 'fa-tags', 'Pricing Review', 'bg-amber-50 text-amber-700', 'Review competitive pricing')}
-            ${quickActionBtn('competitor_scan', 'fa-search', 'Competitor Scan', 'bg-blue-50 text-blue-700', 'Scan competitor moves')}
-            ${quickActionBtn('inventory_action', 'fa-boxes', 'Inventory Check', 'bg-emerald-50 text-emerald-700', 'Review stock levels')}
-            ${quickActionBtn('email_draft', 'fa-envelope', 'Email Draft', 'bg-pink-50 text-pink-700', 'Generate email campaign')}
+          <div class="bg-red-500/20 border border-red-400/20 rounded-xl px-3 py-2 text-center min-w-[72px]">
+            <div class="text-2xl font-bold text-red-200">${urgent.length}</div>
+            <div class="text-violet-300 text-[10px] font-medium">Urgent</div>
+          </div>
+          <div class="bg-white/10 rounded-xl px-3 py-2 text-center min-w-[72px]">
+            <div class="text-2xl font-bold">${S.health.overall}</div>
+            <div class="text-violet-300 text-[10px] font-medium">Health</div>
+          </div>
+          <div class="bg-white/10 rounded-xl px-3 py-2 text-center min-w-[72px]">
+            <div class="text-2xl font-bold">${activeWF.length}</div>
+            <div class="text-violet-300 text-[10px] font-medium">Workflows</div>
+          </div>
+          <div class="ml-auto flex gap-2">
+            <button onclick="runDue()" title="Process scheduled tasks" class="px-3 py-2 rounded-xl bg-white/10 text-white text-xs font-semibold hover:bg-white/20 transition-colors border border-white/10">
+              <i class="fas fa-sync-alt mr-1.5"></i>Run Scheduled
+            </button>
+            <button onclick="nav('generate')" class="px-4 py-2 rounded-xl bg-white text-violet-700 text-xs font-bold hover:bg-violet-50 transition-colors">
+              <i class="fas fa-magic mr-1.5"></i>Generate Intent
+            </button>
           </div>
         </div>
-
-        <!-- Active Schedules -->
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-          <div class="flex items-center justify-between mb-3">
-            <h3 class="font-semibold text-gray-800">Active Schedules</h3>
-            <span class="text-xs bg-violet-100 text-violet-600 px-2 py-0.5 rounded-full">${stats.scheduledTasks ?? 0} active</span>
-          </div>
-          <div id="dashboard-schedules">
-            <div class="shimmer h-10 rounded-lg mb-2"></div>
-            <div class="shimmer h-10 rounded-lg mb-2"></div>
-            <div class="shimmer h-10 rounded-lg"></div>
-          </div>
-          <script>loadDashboardSchedules();</script>
-        </div>
-      </div>
-    </div>
-  `;
-
-  loadDashboardSchedules();
-}
-
-function statCard(label, value, icon, color, pulse = false) {
-  const colors = {
-    violet: 'from-violet-500 to-purple-600',
-    amber: 'from-amber-400 to-orange-500',
-    emerald: 'from-emerald-400 to-teal-500',
-    red: 'from-red-400 to-rose-500',
-    blue: 'from-blue-400 to-indigo-500'
-  };
-  return `
-    <div class="stat-glow bg-white rounded-2xl p-5 border border-gray-100">
-      <div class="flex items-center justify-between mb-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br ${colors[color]} flex items-center justify-center">
-          <i class="fas ${icon} text-white text-sm"></i>
-        </div>
-        ${pulse && value > 0 ? '<div class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></div>' : ''}
-      </div>
-      <div class="text-2xl font-bold text-gray-800">${value}</div>
-      <div class="text-xs text-gray-500 mt-0.5">${label}</div>
-    </div>
-  `;
-}
-
-function quickActionBtn(intentType, icon, label, colorClass, hint) {
-  return `
-    <button onclick="quickGenerate('${intentType}')" 
-      class="btn flex items-center gap-3 p-3 rounded-xl ${colorClass} hover:opacity-80 text-left w-full">
-      <i class="fas ${icon} w-4 text-center"></i>
-      <div>
-        <div class="text-sm font-medium">${label}</div>
-        <div class="text-xs opacity-70">${hint}</div>
-      </div>
-    </button>
-  `;
-}
-
-async function loadDashboardSchedules() {
-  try {
-    const r = await API.get('/schedules');
-    const el = document.getElementById('dashboard-schedules');
-    if (!el) return;
-    const active = (r.data ?? []).filter(s => s.isActive).slice(0, 3);
-    if (active.length === 0) {
-      el.innerHTML = '<p class="text-xs text-gray-400 text-center py-2">No active schedules</p>';
-      return;
-    }
-    el.innerHTML = active.map(s => `
-      <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50 cursor-pointer mb-1" onclick="navigate('schedules')">
-        <div class="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center shrink-0">
-          <i class="fas fa-clock text-violet-500 text-xs"></i>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="text-xs font-medium text-gray-700 truncate">${s.name}</div>
-          <div class="text-xs text-gray-400">${formatDate(s.nextRun)}</div>
-        </div>
-        <span class="text-xs text-emerald-600 font-medium">Active</span>
-      </div>
-    `).join('');
-  } catch (_) {}
-}
-
-// ============================================================
-// INTENT QUEUE PAGE
-// ============================================================
-
-async function renderIntentsPage() {
-  const r = await API.get('/intents');
-  State.intents = r.data ?? [];
-
-  const types = [...new Set(State.intents.map(i => i.type))];
-
-  document.getElementById('app-content').innerHTML = `
-    <!-- Toolbar -->
-    <div class="flex flex-wrap items-center gap-3 mb-6">
-      <div class="flex gap-1 bg-gray-100 p-1 rounded-xl">
-        ${['all', 'pending', 'approved', 'rejected'].map(s =>
-          `<button onclick="filterIntents('${s}')" 
-            class="tab-btn px-3 py-1.5 rounded-lg text-sm font-medium transition-all text-gray-600 ${s === 'all' ? 'active' : ''}"
-            data-tab="${s}">${s.charAt(0).toUpperCase() + s.slice(1)}</button>`
-        ).join('')}
-      </div>
-      <select id="type-filter" onchange="filterIntents()" class="text-sm border border-gray-200 rounded-xl px-3 py-2 text-gray-600 bg-white">
-        <option value="">All Types</option>
-        ${types.map(t => `<option value="${t}">${formatIntentType(t)}</option>`).join('')}
-      </select>
-      <div class="ml-auto flex gap-2">
-        <button onclick="approveAllPending()" 
-          class="btn text-sm bg-emerald-600 text-white px-4 py-2 rounded-xl font-medium hover:bg-emerald-700 hidden" 
-          id="approve-all-btn">
-          <i class="fas fa-check-double mr-1.5"></i>Approve All Low Risk
-        </button>
-        <button onclick="navigate('generate')" 
-          class="btn text-sm bg-violet-600 text-white px-4 py-2 rounded-xl font-medium hover:bg-violet-700">
-          <i class="fas fa-plus mr-1.5"></i>New Intent
-        </button>
       </div>
     </div>
 
-    <!-- Intent List -->
-    <div id="intents-list">
-      ${renderIntentCards(State.intents)}
-    </div>
-  `;
-
-  checkApproveAllButton();
-}
-
-function filterIntents(status) {
-  const tabs = document.querySelectorAll('[data-tab]');
-  const typeFilter = document.getElementById('type-filter')?.value ?? '';
-
-  let filtered = [...State.intents];
-
-  // Status filter
-  const activeTab = status ?? document.querySelector('.tab-btn.active')?.dataset.tab ?? 'all';
-  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab));
-  if (activeTab !== 'all') filtered = filtered.filter(i => i.status === activeTab);
-
-  // Type filter
-  if (typeFilter) filtered = filtered.filter(i => i.type === typeFilter);
-
-  document.getElementById('intents-list').innerHTML = renderIntentCards(filtered);
-  checkApproveAllButton(filtered);
-}
-
-function checkApproveAllButton(intents) {
-  const btn = document.getElementById('approve-all-btn');
-  if (!btn) return;
-  const src = intents ?? State.intents;
-  const lowRiskPending = src.filter(i => i.status === 'pending' && i.riskLevel === 'low');
-  btn.classList.toggle('hidden', lowRiskPending.length === 0);
-}
-
-function renderIntentCards(intents) {
-  if (intents.length === 0) {
-    return `<div class="text-center py-16 text-gray-400">
-      <i class="fas fa-inbox text-5xl mb-4 block opacity-30"></i>
-      <p class="font-medium text-gray-500">No intents found</p>
-      <p class="text-sm mt-1">Generate a new intent to get started</p>
-      <button onclick="navigate('generate')" class="mt-4 btn bg-violet-600 text-white px-4 py-2 rounded-xl text-sm">Generate Intent</button>
-    </div>`;
-  }
-
-  return intents.map(intent => intentCard(intent)).join('');
-}
-
-function intentCard(intent) {
-  const typeIcon = getIntentIcon(intent.type);
-  const riskClass = `risk-${intent.riskLevel}`;
-  const statusClass = `status-${intent.status}`;
-
-  return `
-    <div class="intent-card ${riskClass} ${statusClass} bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4 cursor-pointer hover:shadow-md"
-      onclick="openIntentModal('${intent.id}')">
-      <div class="flex items-start gap-4">
-        
-        <!-- Icon -->
-        <div class="w-11 h-11 rounded-xl ${getIntentBg(intent.type)} flex items-center justify-center shrink-0">
-          <i class="fas ${typeIcon} ${getIntentIconColor(intent.type)}"></i>
+    <!-- Active Workflows banner -->
+    ${activeWF.length>0 ? `
+      <div class="bg-violet-50 border border-violet-200 rounded-2xl p-4 mb-5">
+        <div class="flex items-center gap-2 mb-2">
+          <i class="fas fa-project-diagram text-violet-600 text-sm"></i>
+          <span class="text-sm font-bold text-violet-700">${activeWF.length} Active Workflow${activeWF.length>1?'s':''} In Progress</span>
         </div>
-
-        <!-- Main Content -->
-        <div class="flex-1 min-w-0">
-          <div class="flex flex-wrap items-center gap-2 mb-1.5">
-            <span class="text-xs font-semibold uppercase tracking-wide text-gray-400">${formatIntentType(intent.type)}</span>
-            <span class="risk-badge-${intent.riskLevel} text-xs px-2 py-0.5 rounded-full font-medium">
-              ${intent.riskLevel === 'high' ? '⚠️' : intent.riskLevel === 'medium' ? '⚡' : '✓'} ${intent.riskLevel} risk
-            </span>
-            ${intent.status !== 'pending' 
-              ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium ${getStatusBadgeClass(intent.status)}">${intent.status}</span>` 
-              : `<span class="pending-badge text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-medium">⏳ awaiting review</span>`}
-            <span class="ml-auto text-xs text-gray-400">
-              <i class="fas fa-robot mr-1 text-gray-300"></i>${intent.metadata.generatedBy}
-            </span>
-          </div>
-          
-          <h3 class="font-semibold text-gray-800 text-sm mb-2 leading-snug">${intent.summary}</h3>
-          
-          <p class="text-xs text-gray-500 line-clamp-2">${intent.detailedBreakdown?.substring(0, 150)}...</p>
-
-          <!-- Actions Preview -->
-          ${intent.suggestedActions.length > 0 ? `
-            <div class="flex gap-2 mt-3 flex-wrap">
-              ${intent.suggestedActions.slice(0, 2).map(a => 
-                `<span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-lg">
-                  <i class="fas fa-arrow-right text-gray-400 mr-1"></i>${a.label}
-                </span>`
-              ).join('')}
-              ${intent.suggestedActions.length > 2 ? `<span class="text-xs text-gray-400">+${intent.suggestedActions.length - 2} more</span>` : ''}
-            </div>
-          ` : ''}
-        </div>
-
-        <!-- Priority + Time -->
-        <div class="text-right shrink-0">
-          <div class="priority-${intent.metadata.priority} font-bold text-lg">${'●'.repeat(Math.max(0, 6 - intent.metadata.priority))}<span class="opacity-20">${'●'.repeat(intent.metadata.priority - 1)}</span></div>
-          <div class="text-xs text-gray-400 mt-1">${timeAgo(intent.metadata.generatedAt)}</div>
-          ${intent.metadata.estimatedValue ? `<div class="text-xs text-emerald-600 font-medium mt-1">${intent.metadata.estimatedValue}</div>` : ''}
-        </div>
-      </div>
-
-      <!-- Approval Buttons (only for pending) -->
-      ${intent.status === 'pending' ? `
-        <div class="flex gap-2 mt-4 pt-4 border-t border-gray-100" onclick="event.stopPropagation()">
-          <button onclick="approveIntent('${intent.id}')" 
-            class="btn flex-1 bg-emerald-600 text-white py-2 rounded-xl text-sm font-medium hover:bg-emerald-700 flex items-center justify-center gap-1.5">
-            <i class="fas fa-check"></i> Approve
-          </button>
-          <button onclick="openModifyModal('${intent.id}')" 
-            class="btn flex-1 bg-blue-600 text-white py-2 rounded-xl text-sm font-medium hover:bg-blue-700 flex items-center justify-center gap-1.5">
-            <i class="fas fa-edit"></i> Modify
-          </button>
-          <button onclick="rejectIntent('${intent.id}')" 
-            class="btn flex-1 bg-red-50 text-red-600 py-2 rounded-xl text-sm font-medium hover:bg-red-100 flex items-center justify-center gap-1.5">
-            <i class="fas fa-times"></i> Reject
-          </button>
-          <button onclick="openIntentModal('${intent.id}')" 
-            class="btn w-10 bg-gray-100 text-gray-600 py-2 rounded-xl text-sm hover:bg-gray-200 flex items-center justify-center">
-            <i class="fas fa-info"></i>
-          </button>
-        </div>
-      ` : ''}
-    </div>
-  `;
-}
-
-function miniIntentCard(intent) {
-  return `
-    <div class="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 cursor-pointer mb-2 group"
-      onclick="openIntentModal('${intent.id}')">
-      <div class="w-9 h-9 rounded-xl ${getIntentBg(intent.type)} flex items-center justify-center shrink-0">
-        <i class="fas ${getIntentIcon(intent.type)} ${getIntentIconColor(intent.type)} text-sm"></i>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium text-gray-700 truncate">${intent.summary}</div>
-        <div class="text-xs text-gray-400 flex items-center gap-2">
-          <span>${formatIntentType(intent.type)}</span>
-          <span>·</span>
-          <span>${timeAgo(intent.metadata.generatedAt)}</span>
-        </div>
-      </div>
-      <div class="flex items-center gap-2">
-        <span class="risk-badge-${intent.riskLevel} text-xs px-1.5 py-0.5 rounded-full">${intent.riskLevel}</span>
-        <i class="fas fa-chevron-right text-gray-300 text-xs group-hover:text-gray-500"></i>
-      </div>
-    </div>
-  `;
-}
-
-// ============================================================
-// INTENT MODAL (Detail + Guidance)
-// ============================================================
-
-async function openIntentModal(id) {
-  const r = await API.get(`/intents/${id}`);
-  if (!r.success) return toast('Failed to load intent', 'error');
-  const intent = r.data;
-
-  document.getElementById('intent-modal-content').innerHTML = `
-    <!-- Header -->
-    <div class="bg-gradient-to-r ${getIntentGradient(intent.type)} p-6 rounded-t-2xl">
-      <div class="flex items-start justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center">
-            <i class="fas ${getIntentIcon(intent.type)} text-white text-xl"></i>
-          </div>
-          <div>
-            <div class="text-white/80 text-xs uppercase tracking-wide">${formatIntentType(intent.type)}</div>
-            <div class="text-white font-bold text-lg leading-tight max-w-md">${intent.summary}</div>
-          </div>
-        </div>
-        <button onclick="closeIntentModal()" class="text-white/70 hover:text-white ml-4">
-          <i class="fas fa-times text-xl"></i>
-        </button>
-      </div>
-      <div class="flex gap-2 mt-4">
-        <span class="text-xs bg-white/20 text-white px-2 py-1 rounded-full">
-          ${intent.riskLevel === 'high' ? '⚠️ High Risk' : intent.riskLevel === 'medium' ? '⚡ Medium Risk' : '✓ Low Risk'}
-        </span>
-        <span class="text-xs bg-white/20 text-white px-2 py-1 rounded-full">
-          <i class="fas fa-robot mr-1"></i>${intent.metadata.generatedBy}
-        </span>
-        <span class="text-xs bg-white/20 text-white px-2 py-1 rounded-full">
-          ${formatIntentType(intent.metadata.category)}
-        </span>
-        <span class="ml-auto text-xs bg-white/20 text-white px-2 py-1 rounded-full">
-          ${intent.status === 'pending' ? '⏳ Awaiting Review' : intent.status === 'approved' ? '✅ Approved' : '❌ Rejected'}
-        </span>
-      </div>
-    </div>
-
-    <!-- Body -->
-    <div class="p-6 space-y-5">
-
-      <!-- Guidance Block (THE GUIDE SYSTEM) -->
-      <div class="guidance-block rounded-xl p-4 space-y-3">
-        <div class="text-xs uppercase tracking-wide text-violet-500 font-bold mb-1">
-          <i class="fas fa-compass mr-1.5"></i>Your Step-by-Step Guide
-        </div>
-        <div>
-          <div class="flex items-center gap-2 mb-1">
-            <div class="w-5 h-5 rounded-full bg-violet-500 text-white flex items-center justify-center text-xs font-bold shrink-0">1</div>
-            <span class="text-xs font-semibold text-violet-700 uppercase tracking-wide">Why This Matters</span>
-          </div>
-          <p class="text-sm text-gray-700 ml-7">${intent.guidance.whyThisMatters}</p>
-        </div>
-        <div>
-          <div class="flex items-center gap-2 mb-1">
-            <div class="w-5 h-5 rounded-full bg-violet-500 text-white flex items-center justify-center text-xs font-bold shrink-0">2</div>
-            <span class="text-xs font-semibold text-violet-700 uppercase tracking-wide">What To Do Next</span>
-          </div>
-          <p class="text-sm text-gray-700 ml-7">${intent.guidance.whatToDoNext}</p>
-        </div>
-        <div>
-          <div class="flex items-center gap-2 mb-1">
-            <div class="w-5 h-5 rounded-full bg-violet-600 text-white flex items-center justify-center text-xs font-bold shrink-0">3</div>
-            <span class="text-xs font-semibold text-violet-700 uppercase tracking-wide">Expected Outcome</span>
-          </div>
-          <p class="text-sm text-emerald-700 font-medium ml-7">${intent.guidance.expectedOutcome}</p>
-        </div>
-      </div>
-
-      <!-- Detailed Breakdown -->
-      <div>
-        <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-          <i class="fas fa-file-alt text-gray-400"></i> Detailed Analysis
-        </h4>
-        <div class="bg-gray-50 rounded-xl p-4 text-sm text-gray-700 whitespace-pre-line leading-relaxed">${intent.detailedBreakdown}</div>
-      </div>
-
-      <!-- Suggested Actions -->
-      <div>
-        <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-          <i class="fas fa-tasks text-gray-400"></i> Suggested Actions
-          <span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full ml-1">Requires your approval</span>
-        </h4>
-        <div class="space-y-2">
-          ${intent.suggestedActions.map((a, idx) => `
-            <div class="border border-gray-200 rounded-xl p-3 flex items-start gap-3">
-              <div class="w-6 h-6 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center text-xs font-bold shrink-0">${idx + 1}</div>
-              <div class="flex-1">
-                <div class="font-medium text-sm text-gray-800">${a.label}</div>
-                <div class="text-xs text-gray-500 mt-0.5">${a.description}</div>
-                <div class="flex items-center gap-3 mt-1.5">
-                  <span class="text-xs text-emerald-600"><i class="fas fa-chart-line mr-1"></i>${a.estimatedImpact}</span>
-                  <span class="text-xs ${a.reversible ? 'text-blue-500' : 'text-red-500'}">
-                    <i class="fas ${a.reversible ? 'fa-undo' : 'fa-exclamation-circle'} mr-1"></i>
-                    ${a.reversible ? 'Reversible' : 'Irreversible'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-
-      <!-- Tags -->
-      <div class="flex flex-wrap gap-1.5">
-        ${(intent.metadata.tags ?? []).map(t => `<span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">#${t}</span>`).join('')}
-        <span class="text-xs text-gray-400 ml-auto">${new Date(intent.metadata.generatedAt).toLocaleString()}</span>
-      </div>
-
-      <!-- Modification Note -->
-      ${intent.modificationNote ? `
-        <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-800">
-          <i class="fas fa-edit mr-2"></i><strong>Note:</strong> ${intent.modificationNote}
-        </div>
-      ` : ''}
-    </div>
-
-    <!-- Footer Actions (Human Verification Layer) -->
-    ${intent.status === 'pending' ? `
-      <div class="border-t border-gray-100 p-5 bg-gray-50 rounded-b-2xl">
-        <div class="text-xs text-gray-500 mb-3 text-center">
-          <i class="fas fa-lock mr-1 text-gray-400"></i>
-          Your decision required — No automatic actions will occur
-        </div>
-        <div class="flex gap-3">
-          <button onclick="approveIntent('${intent.id}'); closeIntentModal();" 
-            class="btn flex-1 bg-emerald-600 text-white py-3 rounded-xl font-semibold hover:bg-emerald-700 flex items-center justify-center gap-2">
-            <i class="fas fa-check"></i> Approve Intent
-          </button>
-          <button onclick="openModifyModal('${intent.id}'); closeIntentModal();" 
-            class="btn flex-1 bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 flex items-center justify-center gap-2">
-            <i class="fas fa-edit"></i> Modify
-          </button>
-          <button onclick="rejectIntent('${intent.id}'); closeIntentModal();" 
-            class="btn flex-1 bg-red-50 text-red-600 py-3 rounded-xl font-semibold hover:bg-red-100 flex items-center justify-center gap-2">
-            <i class="fas fa-times"></i> Reject
-          </button>
-        </div>
-      </div>
-    ` : `
-      <div class="border-t border-gray-100 p-4 bg-gray-50 rounded-b-2xl flex items-center justify-between">
-        <span class="${getStatusBadgeClass(intent.status)} text-sm px-3 py-1.5 rounded-xl font-medium">
-          ${intent.status === 'approved' ? '✅ You approved this intent' : '❌ You rejected this intent'}
-        </span>
-        <button onclick="closeIntentModal()" class="text-gray-500 hover:text-gray-700 text-sm">Close</button>
-      </div>
-    `}
-  `;
-
-  document.getElementById('intent-modal').classList.remove('hidden');
-}
-
-function closeIntentModal() {
-  document.getElementById('intent-modal').classList.add('hidden');
-}
-
-// ── Modify Modal ──────────────────────────────────────────────
-function openModifyModal(id) {
-  const intent = State.intents.find(i => i.id === id);
-  if (!intent) return;
-
-  document.getElementById('schedule-modal-content').innerHTML = `
-    <div class="p-6">
-      <h3 class="font-bold text-gray-800 text-lg mb-1">Modify Intent</h3>
-      <p class="text-sm text-gray-500 mb-4">Add a note explaining your modification before approving</p>
-      <textarea id="modify-note" 
-        class="w-full border border-gray-200 rounded-xl p-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-violet-400 resize-none" 
-        rows="4"
-        placeholder="e.g., Reduce suggested price change from 10% to 5% only on SKU A..."></textarea>
-      <div class="flex gap-3 mt-4">
-        <button onclick="submitModify('${id}')" 
-          class="btn flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-semibold hover:bg-blue-700">
-          <i class="fas fa-check mr-2"></i>Save Modification
-        </button>
-        <button onclick="closeScheduleModal()" 
-          class="btn bg-gray-100 text-gray-600 px-4 py-2.5 rounded-xl hover:bg-gray-200">
-          Cancel
-        </button>
-      </div>
-    </div>
-  `;
-  document.getElementById('schedule-modal').classList.remove('hidden');
-}
-
-async function submitModify(id) {
-  const note = document.getElementById('modify-note').value.trim();
-  if (!note) { toast('Please add a modification note', 'warning'); return; }
-
-  const r = await API.patch(`/intents/${id}`, { status: 'modified', modificationNote: note });
-  if (r.success) {
-    toast('Intent modified ✏️', 'info');
-    closeScheduleModal();
-    await reloadIntents();
-  } else {
-    toast(r.error ?? 'Failed to modify', 'error');
-  }
-}
-
-// ── Approve / Reject ─────────────────────────────────────────
-async function approveIntent(id) {
-  const intent = State.intents.find(i => i.id === id);
-  if (intent?.riskLevel === 'high') {
-    if (!confirm('⚠️ This is a HIGH RISK intent. Are you sure you want to approve it?')) return;
-  }
-  const r = await API.patch(`/intents/${id}`, { status: 'approved' });
-  if (r.success) {
-    toast('Intent approved ✅', 'success');
-    await reloadIntents();
-  } else {
-    toast(r.error ?? 'Failed to approve', 'error');
-  }
-}
-
-async function rejectIntent(id) {
-  const r = await API.patch(`/intents/${id}`, { status: 'rejected' });
-  if (r.success) {
-    toast('Intent rejected ❌', 'info');
-    await reloadIntents();
-  } else {
-    toast(r.error ?? 'Failed to reject', 'error');
-  }
-}
-
-async function approveAllPending() {
-  const pending = State.intents.filter(i => i.status === 'pending' && i.riskLevel === 'low');
-  if (pending.length === 0) return;
-  if (!confirm(`Approve all ${pending.length} low-risk pending intents?`)) return;
-  let count = 0;
-  for (const i of pending) {
-    const r = await API.patch(`/intents/${i.id}`, { status: 'approved' });
-    if (r.success) count++;
-  }
-  toast(`✅ Approved ${count} intents`, 'success');
-  await reloadIntents();
-}
-
-async function reloadIntents() {
-  const r = await API.get('/intents');
-  State.intents = r.data ?? [];
-  if (State.currentPage === 'intents') {
-    document.getElementById('intents-list').innerHTML = renderIntentCards(State.intents);
-  }
-  await refreshStats();
-}
-
-// ============================================================
-// GENERATE INTENT PAGE
-// ============================================================
-
-function renderGeneratePage() {
-  const intentTypes = [
-    { value: 'market_analysis', label: 'Market Analysis', icon: 'fa-chart-line', desc: 'Analyze trends, demand shifts, opportunities', model: 'Claude', color: 'violet' },
-    { value: 'pricing_update', label: 'Pricing Review', icon: 'fa-tags', desc: 'Compare prices, suggest adjustments', model: 'Hybrid', color: 'amber' },
-    { value: 'competitor_scan', label: 'Competitor Scan', icon: 'fa-search', desc: 'Analyze competitor moves and gaps', model: 'OpenAI', color: 'blue' },
-    { value: 'inventory_action', label: 'Inventory Check', icon: 'fa-boxes', desc: 'Restock alerts, slow movers, optimization', model: 'OpenAI', color: 'emerald' },
-    { value: 'email_draft', label: 'Email Campaign', icon: 'fa-envelope', desc: 'Generate email drafts and campaigns', model: 'Claude', color: 'pink' },
-    { value: 'product_creation', label: 'Product Ideas', icon: 'fa-lightbulb', desc: 'New products, bundles, descriptions', model: 'Claude', color: 'yellow' },
-    { value: 'trend_report', label: 'Trend Report', icon: 'fa-fire', desc: 'Rising and declining market trends', model: 'Claude', color: 'red' },
-    { value: 'performance_review', label: 'Performance Review', icon: 'fa-tachometer-alt', desc: 'Business health and KPI analysis', model: 'Claude', color: 'indigo' },
-    { value: 'opportunity_alert', label: 'Opportunity Hunt', icon: 'fa-gem', desc: 'Identify hidden business opportunities', model: 'Claude', color: 'purple' },
-    { value: 'bundle_suggestion', label: 'Bundle Strategy', icon: 'fa-gift', desc: 'Suggest product bundles and combos', model: 'Hybrid', color: 'teal' },
-    { value: 'restock_alert', label: 'Restock Alert', icon: 'fa-exclamation-triangle', desc: 'Urgent inventory replenishment needs', model: 'OpenAI', color: 'orange' },
-    { value: 'campaign_suggestion', label: 'Campaign Idea', icon: 'fa-bullhorn', desc: 'Marketing campaign recommendations', model: 'Hybrid', color: 'rose' }
-  ];
-
-  const colorMap = {
-    violet: 'bg-violet-50 border-violet-200 hover:bg-violet-100', amber: 'bg-amber-50 border-amber-200 hover:bg-amber-100',
-    blue: 'bg-blue-50 border-blue-200 hover:bg-blue-100', emerald: 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100',
-    pink: 'bg-pink-50 border-pink-200 hover:bg-pink-100', yellow: 'bg-yellow-50 border-yellow-200 hover:bg-yellow-100',
-    red: 'bg-red-50 border-red-200 hover:bg-red-100', indigo: 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100',
-    purple: 'bg-purple-50 border-purple-200 hover:bg-purple-100', teal: 'bg-teal-50 border-teal-200 hover:bg-teal-100',
-    orange: 'bg-orange-50 border-orange-200 hover:bg-orange-100', rose: 'bg-rose-50 border-rose-200 hover:bg-rose-100'
-  };
-  const iconColorMap = {
-    violet: 'text-violet-600', amber: 'text-amber-600', blue: 'text-blue-600', emerald: 'text-emerald-600',
-    pink: 'text-pink-600', yellow: 'text-yellow-600', red: 'text-red-600', indigo: 'text-indigo-600',
-    purple: 'text-purple-600', teal: 'text-teal-600', orange: 'text-orange-600', rose: 'text-rose-600'
-  };
-
-  document.getElementById('app-content').innerHTML = `
-    <div class="max-w-4xl">
-      
-      <!-- Info Banner -->
-      <div class="bg-violet-50 border border-violet-200 rounded-2xl p-4 mb-6 flex gap-3">
-        <div class="text-violet-600 text-xl mt-0.5"><i class="fas fa-shield-alt"></i></div>
-        <div>
-          <div class="font-semibold text-violet-800 text-sm">Intent Generation — Not Action Execution</div>
-          <div class="text-violet-700 text-xs mt-0.5">The AI will analyze your business and generate a structured recommendation. <strong>Nothing will happen automatically.</strong> You review and decide what to do.</div>
-        </div>
-      </div>
-
-      <!-- Intent Type Selection -->
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
-        <h3 class="font-semibold text-gray-800 mb-1">Choose Analysis Type</h3>
-        <p class="text-sm text-gray-500 mb-4">What would you like the AI to analyze?</p>
-        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-          ${intentTypes.map(t => `
-            <button onclick="selectIntentType('${t.value}')" 
-              data-type="${t.value}"
-              class="intent-type-btn ${colorMap[t.color]} border rounded-xl p-3 text-left transition-all">
-              <i class="fas ${t.icon} ${iconColorMap[t.color]} mb-2 block"></i>
-              <div class="font-medium text-gray-800 text-sm">${t.label}</div>
-              <div class="text-xs text-gray-500 mt-0.5">${t.desc}</div>
-              <div class="text-xs mt-2 flex items-center gap-1">
-                <i class="fas fa-robot text-gray-400"></i>
-                <span class="text-gray-500">via ${t.model}</span>
-              </div>
+        <div class="flex flex-wrap gap-2">
+          ${activeWF.map(w=>`
+            <button onclick="nav('workflows')" class="flex items-center gap-2 bg-white border border-violet-200 rounded-xl px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100 transition-colors">
+              <div class="w-16 bg-gray-100 rounded-full h-1.5"><div class="bg-violet-500 h-1.5 rounded-full" style="width:${w.progress||0}%"></div></div>
+              ${esc(w.name)} — ${w.progress||0}%
             </button>
           `).join('')}
         </div>
       </div>
+    ` : ''}
 
-      <!-- Context Form -->
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4" id="context-form">
-        <h3 class="font-semibold text-gray-800 mb-1">Add Context (Optional)</h3>
-        <p class="text-sm text-gray-500 mb-4">The more context you provide, the more personalized the intent will be.</p>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label class="text-xs font-medium text-gray-600 mb-1 block">Product Focus</label>
-            <input id="ctx-product" type="text" placeholder="e.g., Shea Moisture Curl Cream"
-              class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-          </div>
-          <div>
-            <label class="text-xs font-medium text-gray-600 mb-1 block">Price Range</label>
-            <input id="ctx-price" type="text" placeholder="e.g., $15-$45"
-              class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-          </div>
-          <div>
-            <label class="text-xs font-medium text-gray-600 mb-1 block">Competitors</label>
-            <input id="ctx-competitors" type="text" placeholder="e.g., Amazon, Target, Etsy sellers"
-              class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-          </div>
-          <div>
-            <label class="text-xs font-medium text-gray-600 mb-1 block">Current Challenge</label>
-            <input id="ctx-challenge" type="text" placeholder="e.g., Sales slowing down this week"
-              class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-          </div>
+    <!-- Health alerts -->
+    ${(S.health.alerts||[]).filter(a=>a.severity==='critical'||a.severity==='warning').slice(0,2).map(a=>`
+      <div class="flex items-start gap-3 rounded-xl p-3 mb-3 ${a.severity==='critical'?'bg-red-50 border border-red-200':'bg-amber-50 border border-amber-200'}">
+        <i class="fas ${a.severity==='critical'?'fa-exclamation-circle text-red-500':'fa-exclamation-triangle text-amber-500'} mt-0.5"></i>
+        <div class="flex-1 text-xs">
+          <span class="font-semibold ${a.severity==='critical'?'text-red-700':'text-amber-700'}">${esc(a.area)}: </span>
+          <span class="${a.severity==='critical'?'text-red-600':'text-amber-600'}">${esc(a.message)}</span>
         </div>
-        <div class="mt-3">
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Additional Notes</label>
-          <textarea id="ctx-notes" rows="2" placeholder="Any other context that will help the AI..."
-            class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 resize-none"></textarea>
+      </div>
+    `).join('')}
+
+    ${pending.length===0 ? `
+      <div class="bg-white rounded-2xl border border-gray-100 p-14 text-center shadow-sm">
+        <div class="text-5xl mb-4">🎉</div>
+        <div class="font-bold text-gray-700 text-xl">All caught up!</div>
+        <p class="text-gray-400 text-sm mt-2 mb-6 max-w-md mx-auto">No pending intents. Your scheduled agents will generate new recommendations automatically, or you can generate one now.</p>
+        <div class="flex gap-3 justify-center flex-wrap">
+          <button onclick="nav('generate')" class="bg-violet-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-violet-700 transition-colors">
+            <i class="fas fa-magic mr-2"></i>Generate Intent Now
+          </button>
+          <button onclick="runDue()" class="bg-gray-100 text-gray-600 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200 transition-colors">
+            <i class="fas fa-sync-alt mr-2"></i>Run Scheduled Tasks
+          </button>
+        </div>
+      </div>
+    ` : `
+      <!-- Urgent -->
+      ${urgent.length>0 ? `
+        <div class="mb-5">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-2 h-2 rounded-full bg-red-500 pulse-dot"></div>
+            <span class="text-xs font-bold text-red-600 uppercase tracking-widest">Urgent — Act Today</span>
+            <span class="bg-red-100 text-red-600 text-[10px] px-2 py-0.5 rounded-full font-semibold">${urgent.length}</span>
+            <div class="ml-auto">
+              <button onclick="batchApprove('low')" class="text-[10px] text-gray-400 hover:text-violet-600 transition-colors">Approve all low-risk</button>
+            </div>
+          </div>
+          <div class="space-y-3">${urgent.map(i=>intentCardHTML(i)).join('')}</div>
+        </div>
+      ` : ''}
+
+      <!-- High Priority -->
+      ${high.length>0 ? `
+        <div class="mb-5">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-xs font-bold text-amber-600 uppercase tracking-widest">High Priority</span>
+            <span class="bg-amber-100 text-amber-600 text-[10px] px-2 py-0.5 rounded-full font-semibold">${high.length}</span>
+          </div>
+          <div class="space-y-3">${high.map(i=>intentCardHTML(i)).join('')}</div>
+        </div>
+      ` : ''}
+
+      <!-- Other -->
+      ${rest.length>0 ? `
+        <div class="mb-5">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-xs font-bold text-gray-400 uppercase tracking-widest">Other Recommendations</span>
+            <span class="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-semibold">${rest.length}</span>
+          </div>
+          <div class="space-y-3">${rest.map(i=>intentCardHTML(i)).join('')}</div>
+        </div>
+      ` : ''}
+    `}
+  `;
+}
+
+// ── Intent Card HTML ──────────────────────────────────────────────
+function intentCardHTML(intent, compact=false) {
+  const isPending = intent.status==='pending';
+  const isApproved = intent.status==='approved';
+  const isRejected = intent.status==='rejected';
+  return `
+    <div class="intent-card ${intent.priority} bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden" id="ic-${intent.id}">
+      <div class="p-4 cursor-pointer" onclick="openIntent('${intent.id}')">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-xl ${iBg(intent.type)} flex items-center justify-center shrink-0">
+            <i class="fas ${iIcon(intent.type)} ${iColor(intent.type)} text-sm"></i>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-1.5 mb-1">
+              <span class="text-[10px] font-bold uppercase tracking-wide text-gray-400">${fmtType(intent.type)}</span>
+              <span class="badge-${intent.priority} text-[10px] px-2 py-0.5 rounded-full font-semibold">${intent.priority==='urgent'?'🚨 ':intent.priority==='high'?'⚡ ':''} ${intent.priority}</span>
+              <span class="risk-${intent.riskLevel} text-[10px] px-2 py-0.5 rounded-full font-medium">${intent.riskLevel} risk</span>
+              ${intent.metadata?.estimatedValue ? `<span class="text-[10px] text-emerald-600 font-bold">${esc(intent.metadata.estimatedValue)}</span>` : ''}
+              <span class="ml-auto text-[10px] text-gray-400">${ago(intent.createdAt)}</span>
+            </div>
+            <div class="font-semibold text-gray-800 text-sm leading-snug mb-2">${esc(intent.summary)}</div>
+
+            ${intent.whyThisMatters && isPending ? `
+              <div class="bg-violet-50 border border-violet-100 rounded-xl px-3 py-2 text-xs text-violet-700 mb-2">
+                <span class="font-semibold">💡 Why it matters: </span>${esc(intent.whyThisMatters.substring(0,130))}${intent.whyThisMatters.length>130?'...':''}
+              </div>
+            ` : ''}
+
+            ${intent.suggestedNextSteps?.length>0 && isPending ? `
+              <div class="flex items-center gap-1.5 text-xs text-gray-500 mb-2">
+                <i class="fas fa-arrow-right text-violet-400 text-[10px]"></i>
+                <span class="font-medium">Next:</span> ${esc(intent.suggestedNextSteps[0])}
+              </div>
+            ` : ''}
+
+            <!-- Confidence bar + agent -->
+            <div class="flex items-center gap-3 mt-2">
+              <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                <div class="conf-bar flex-1 min-w-[60px]"><div class="conf-fill" style="width:${intent.confidenceLevel||75}%"></div></div>
+                <span class="text-[10px] text-gray-400 shrink-0">${intent.confidenceLevel||75}%</span>
+              </div>
+              <div class="flex items-center gap-1 text-[10px] text-gray-400">
+                <i class="fas ${AGENT_ICONS[intent.generatedBy]||'fa-robot'} text-[10px]"></i>
+                <span>${(intent.generatedBy||'AI').replace('Agent','')}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Generate Button -->
-      <div class="flex items-center gap-3">
-        <button onclick="generateIntent()" id="generate-btn"
-          class="btn bg-gradient-to-r from-violet-600 to-purple-600 text-white px-8 py-3.5 rounded-xl font-semibold hover:opacity-90 flex items-center gap-3">
-          <i class="fas fa-magic"></i>
-          <span>Generate Intent</span>
+      ${isPending ? `
+        <div class="border-t border-gray-50 px-4 py-2.5 flex gap-2">
+          <button onclick="event.stopPropagation();quickDecide('${intent.id}','approved')" class="flex-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold px-3 py-2 rounded-xl transition-colors border border-emerald-200">
+            <i class="fas fa-check mr-1.5"></i>Approve
+          </button>
+          <button onclick="event.stopPropagation();openModify('${intent.id}')" class="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-xl transition-colors border border-blue-200">
+            <i class="fas fa-edit mr-1.5"></i>Modify
+          </button>
+          <button onclick="event.stopPropagation();quickDecide('${intent.id}','rejected')" class="flex-1 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold px-3 py-2 rounded-xl transition-colors border border-red-200">
+            <i class="fas fa-times mr-1.5"></i>Reject
+          </button>
+        </div>
+      ` : `
+        <div class="border-t border-gray-50 px-4 py-2 flex items-center gap-2">
+          <span class="text-[10px] font-semibold ${isApproved?'text-emerald-600':isRejected?'text-red-500':'text-blue-600'}">
+            <i class="fas ${isApproved?'fa-check-circle':isRejected?'fa-times-circle':'fa-edit'} mr-1"></i>
+            ${intent.status.charAt(0).toUpperCase()+intent.status.slice(1)} ${intent.reviewedAt?ago(intent.reviewedAt):''}
+          </span>
+          ${intent.modificationNote ? `<span class="text-[10px] text-gray-400 italic truncate">— ${esc(intent.modificationNote)}</span>` : ''}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+// ── Quick Decide ──────────────────────────────────────────────────
+async function quickDecide(id, decision) {
+  if(decision==='approved' && S.intents.find(i=>i.id===id)?.riskLevel==='high') {
+    if(!confirm('This is a HIGH RISK intent. Are you sure you want to approve it?')) return;
+  }
+  const r = await api.patch(`/intents/${id}`, {decision});
+  if(r.success) {
+    toast(decision==='approved'?'✅ Intent approved — take action when ready':'❌ Intent rejected', decision==='approved'?'success':'info');
+    const card = document.getElementById(`ic-${id}`);
+    if(card) { card.style.opacity='0'; card.style.transform='translateX(20px)'; card.style.transition='all 0.3s'; setTimeout(()=>card.remove(),300); }
+    await refreshStats();
+    S.intents = S.intents.map(i=>i.id===id?{...i,status:decision,reviewedAt:new Date().toISOString()}:i);
+  } else { toast('Failed to update intent','error'); }
+}
+window.quickDecide = quickDecide;
+
+async function batchApprove(riskLevel='low') {
+  const targets = S.intents.filter(i=>i.status==='pending'&&i.riskLevel===riskLevel);
+  if(targets.length===0) { toast(`No pending ${riskLevel}-risk intents`,'info'); return; }
+  if(!confirm(`Approve all ${targets.length} pending ${riskLevel}-risk intents?`)) return;
+  let count = 0;
+  for(const i of targets) {
+    const r = await api.patch(`/intents/${i.id}`,{decision:'approved'});
+    if(r.success) count++;
+  }
+  toast(`✅ ${count} intents approved`,'success');
+  if(S.page==='today') renderToday();
+  else if(S.page==='intents') renderIntents();
+  await refreshStats();
+}
+window.batchApprove = batchApprove;
+
+// ── Open Intent Detail Modal ──────────────────────────────────────
+async function openIntent(id) {
+  let intent = S.intents.find(i=>i.id===id);
+  if(!intent) {
+    const r = await api.get(`/intents/${id}`);
+    if(!r.success) { toast('Intent not found','error'); return; }
+    intent = r.data;
+  }
+  openModal(intentDetailHTML(intent));
+}
+window.openIntent = openIntent;
+
+function intentDetailHTML(i) {
+  const isPending = i.status==='pending';
+  return `
+    <div class="p-5">
+      <!-- Header -->
+      <div class="flex items-start gap-3 mb-4">
+        <div class="w-12 h-12 rounded-xl ${iBg(i.type)} flex items-center justify-center shrink-0">
+          <span class="fas ${iIcon(i.type)} ${iColor(i.type)} text-lg"></span>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap items-center gap-1.5 mb-1">
+            <span class="text-xs font-bold uppercase tracking-wider text-gray-400">${fmtType(i.type)}</span>
+            <span class="badge-${i.priority} text-[10px] px-2 py-0.5 rounded-full font-semibold">${i.priority}</span>
+            <span class="risk-${i.riskLevel} text-[10px] px-2 py-0.5 rounded-full font-medium">${i.riskLevel} risk</span>
+            <span class="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-full">${i.status}</span>
+          </div>
+          <h3 class="font-bold text-gray-800 text-base leading-snug">${esc(i.summary)}</h3>
+          <div class="text-xs text-gray-400 mt-1">${fmtDate(i.createdAt)} · Generated by ${(i.generatedBy||'AI').replace('Agent','')} Agent</div>
+        </div>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-lg shrink-0"><i class="fas fa-times"></i></button>
+      </div>
+
+      <!-- Confidence + value -->
+      <div class="flex items-center gap-4 bg-gray-50 rounded-xl p-3 mb-4">
+        <div class="flex-1">
+          <div class="text-[10px] text-gray-400 mb-1 font-medium">AI CONFIDENCE</div>
+          <div class="conf-bar"><div class="conf-fill" style="width:${i.confidenceLevel||75}%"></div></div>
+          <div class="text-xs text-gray-500 mt-1">${i.confidenceLevel||75}% confidence</div>
+        </div>
+        ${i.metadata?.estimatedValue ? `
+          <div class="text-right">
+            <div class="text-[10px] text-gray-400 font-medium mb-1">ESTIMATED VALUE</div>
+            <div class="text-lg font-bold text-emerald-600">${esc(i.metadata.estimatedValue)}</div>
+          </div>
+        ` : ''}
+        ${i.metadata?.estimatedTimeToAct ? `
+          <div class="text-right">
+            <div class="text-[10px] text-gray-400 font-medium mb-1">ACT WITHIN</div>
+            <div class="text-sm font-bold text-amber-600">${esc(i.metadata.estimatedTimeToAct)}</div>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- Why This Matters -->
+      ${i.whyThisMatters ? `
+        <div class="bg-violet-50 border border-violet-200 rounded-xl p-4 mb-4">
+          <div class="flex items-center gap-2 mb-2">
+            <i class="fas fa-lightbulb text-violet-500 text-sm"></i>
+            <span class="text-xs font-bold text-violet-700 uppercase tracking-wider">Why This Matters</span>
+          </div>
+          <p class="text-sm text-violet-800 leading-relaxed">${esc(i.whyThisMatters)}</p>
+        </div>
+      ` : ''}
+
+      <!-- Detailed Reasoning -->
+      ${i.detailedReasoning ? `
+        <div class="mb-4">
+          <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Detailed Analysis</div>
+          <div class="bg-gray-50 rounded-xl p-4 text-sm text-gray-700 leading-relaxed whitespace-pre-line border border-gray-100">${esc(i.detailedReasoning)}</div>
+        </div>
+      ` : ''}
+
+      <!-- Suggested Next Steps -->
+      ${i.suggestedNextSteps?.length>0 ? `
+        <div class="mb-4">
+          <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Suggested Next Steps</div>
+          <div class="space-y-2">
+            ${i.suggestedNextSteps.map((s,idx)=>`
+              <div class="flex items-start gap-3 bg-white border border-gray-100 rounded-xl p-3">
+                <div class="step-badge bg-violet-100 text-violet-700 shrink-0">${idx+1}</div>
+                <span class="text-sm text-gray-700 leading-snug">${esc(s)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Expected Result -->
+      ${i.expectedResult ? `
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4">
+          <div class="flex items-center gap-2 mb-1.5">
+            <i class="fas fa-bullseye text-emerald-500 text-sm"></i>
+            <span class="text-xs font-bold text-emerald-700 uppercase tracking-wider">Expected Result</span>
+          </div>
+          <p class="text-sm text-emerald-800">${esc(i.expectedResult)}</p>
+        </div>
+      ` : ''}
+
+      <!-- Alternative Options -->
+      ${i.alternativeOptions?.length>0 ? `
+        <div class="mb-4">
+          <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Alternative Options</div>
+          <div class="space-y-1.5">
+            ${i.alternativeOptions.map(a=>`<div class="flex items-start gap-2 text-sm text-gray-600"><i class="fas fa-angle-right text-gray-300 mt-0.5 text-xs shrink-0"></i>${esc(a)}</div>`).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Tags -->
+      ${i.tags?.length>0 ? `
+        <div class="flex flex-wrap gap-1.5 mb-4">
+          ${i.tags.map(t=>`<span class="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-full">#${esc(t)}</span>`).join('')}
+        </div>
+      ` : ''}
+
+      <!-- Modification note if any -->
+      ${i.modificationNote ? `
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 text-sm text-blue-700">
+          <i class="fas fa-edit mr-2"></i><strong>Modification note:</strong> ${esc(i.modificationNote)}
+        </div>
+      ` : ''}
+
+      <!-- Safety Badge -->
+      <div class="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-4">
+        <i class="fas fa-shield-alt text-emerald-500"></i>
+        <span class="text-xs text-emerald-700 font-medium">Safe Mode: This intent requires your explicit approval before any action is taken.</span>
+      </div>
+
+      <!-- Action Buttons -->
+      ${isPending ? `
+        <div class="flex gap-2 mt-2">
+          <button onclick="quickDecide('${i.id}','approved');closeModal();" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-3 rounded-xl transition-colors text-sm">
+            <i class="fas fa-check mr-2"></i>Approve
+          </button>
+          <button onclick="closeModal();openModify('${i.id}');" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-3 rounded-xl transition-colors text-sm">
+            <i class="fas fa-edit mr-2"></i>Modify
+          </button>
+          <button onclick="quickDecide('${i.id}','rejected');closeModal();" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-3 rounded-xl transition-colors text-sm">
+            <i class="fas fa-times mr-2"></i>Reject
+          </button>
+        </div>
+      ` : `
+        <div class="flex items-center justify-center gap-2 py-3 bg-gray-50 rounded-xl">
+          <i class="fas ${i.status==='approved'?'fa-check-circle text-emerald-500':i.status==='rejected'?'fa-times-circle text-red-500':'fa-edit text-blue-500'}"></i>
+          <span class="text-sm font-semibold text-gray-600">${i.status.charAt(0).toUpperCase()+i.status.slice(1)} on ${fmtDate(i.reviewedAt)}</span>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+// ── Modify Modal ──────────────────────────────────────────────────
+function openModify(id) {
+  const intent = S.intents.find(i=>i.id===id);
+  openModal(`
+    <div class="p-5">
+      <h3 class="font-bold text-gray-800 text-lg mb-1"><i class="fas fa-edit text-blue-500 mr-2"></i>Modify Intent</h3>
+      <p class="text-sm text-gray-500 mb-4">Add a note explaining your modification. The intent will be saved as "modified" for your records.</p>
+      ${intent ? `<div class="bg-gray-50 rounded-xl p-3 mb-4 text-sm text-gray-700 font-medium">${esc(intent.summary)}</div>` : ''}
+      <textarea id="mod-note" class="w-full border border-gray-200 rounded-xl p-3 text-sm h-28 resize-none focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="e.g. Approved the pricing change but adjusted the discount to 8% instead of 12%..."></textarea>
+      <div class="flex gap-2 mt-4">
+        <button onclick="submitModify('${id}')" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-3 rounded-xl text-sm transition-colors">
+          <i class="fas fa-save mr-2"></i>Save Modification
         </button>
-        <div id="selected-type-display" class="text-sm text-gray-500">
-          <span class="text-gray-400">No type selected — defaults to Market Analysis</span>
+        <button onclick="closeModal()" class="px-4 py-3 rounded-xl bg-gray-100 text-gray-600 text-sm font-semibold hover:bg-gray-200 transition-colors">Cancel</button>
+      </div>
+    </div>
+  `);
+}
+window.openModify = openModify;
+
+async function submitModify(id) {
+  const note = document.getElementById('mod-note')?.value?.trim();
+  if(!note) { toast('Please add a modification note','warning'); return; }
+  const r = await api.patch(`/intents/${id}`,{decision:'modified',note});
+  if(r.success) {
+    toast('✏️ Intent modified and saved','info');
+    closeModal();
+    S.intents = S.intents.map(i=>i.id===id?{...i,status:'modified',modificationNote:note,reviewedAt:new Date().toISOString()}:i);
+    if(S.page==='today') renderToday();
+    else if(S.page==='intents') renderIntents();
+    await refreshStats();
+  } else { toast('Failed to modify intent','error'); }
+}
+window.submitModify = submitModify;
+
+// ================================================================
+// DASHBOARD
+// ================================================================
+async function renderDashboard() {
+  const [statsRes, insRes, hRes] = await Promise.all([
+    api.get('/intents/stats'),
+    api.get('/business/insights'),
+    api.get('/business/health-score')
+  ]);
+  const stats = statsRes.data||{};
+  const insights = insRes.data||[];
+  const health = hRes.data||{overall:72,inventory:68,pricing:74,marketing:65,products:80,operations:75,trend:'up',alerts:[]};
+
+  document.getElementById('content').innerHTML = `
+    <!-- Stats row -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+      ${[
+        {l:'Pending Intents',v:stats.pendingIntents||0,i:'fa-layer-group',c:'violet',sub:'Awaiting your review'},
+        {l:'Approved Today',v:stats.approvedToday||0,i:'fa-check-circle',c:'emerald',sub:'Actions you greenlit'},
+        {l:'Health Score',v:(stats.healthScore||72)+'/100',i:'fa-heartbeat',c:'red',sub:'Overall business health'},
+        {l:'Active Workflows',v:stats.activeWorkflows||0,i:'fa-project-diagram',c:'blue',sub:'In progress now'}
+      ].map(s=>`
+        <div class="stat-card bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+          <div class="flex items-start justify-between mb-3">
+            <div class="w-9 h-9 rounded-xl bg-${s.c}-100 flex items-center justify-center">
+              <i class="fas ${s.i} text-${s.c}-600 text-sm"></i>
+            </div>
+          </div>
+          <div class="text-2xl font-bold text-gray-800 mb-0.5">${s.v}</div>
+          <div class="text-xs font-semibold text-gray-700">${s.l}</div>
+          <div class="text-[10px] text-gray-400 mt-0.5">${s.sub}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+      <!-- Insights -->
+      <div class="lg:col-span-2 bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-50">
+          <div class="font-bold text-gray-800">Weekly Insights</div>
+          <div class="text-xs text-gray-400">Key metrics from your business</div>
+        </div>
+        <div class="grid grid-cols-2 divide-x divide-y divide-gray-50">
+          ${insights.map(ins=>`
+            <div class="p-4">
+              <div class="flex items-center gap-2 mb-2">
+                <div class="w-8 h-8 rounded-lg bg-${ins.color}-100 flex items-center justify-center">
+                  <i class="fas ${ins.icon} text-${ins.color}-600 text-xs"></i>
+                </div>
+                <div>
+                  <div class="text-xs font-semibold text-gray-700">${esc(ins.title)}</div>
+                  <div class="text-[10px] text-gray-400">${esc(ins.area)}</div>
+                </div>
+              </div>
+              <div class="text-xl font-bold text-gray-800">${esc(ins.value)}</div>
+              <div class="flex items-center gap-1 mt-1">
+                <i class="fas ${ins.trend==='up'?'fa-arrow-up text-emerald-500':ins.trend==='down'?'fa-arrow-down text-red-500':'fa-minus text-gray-400'} text-[10px]"></i>
+                <span class="text-[10px] ${ins.trend==='up'?'text-emerald-600':ins.trend==='down'?'text-red-500':'text-gray-400'} font-medium">${ins.trendPercent?Math.abs(ins.trendPercent)+'%':''} ${ins.trend}</span>
+              </div>
+            </div>
+          `).join('')}
         </div>
       </div>
 
-      <!-- Generating Status -->
-      <div id="generating-status" class="hidden mt-6 bg-white rounded-2xl border border-violet-200 p-6">
-        <div class="flex items-center gap-4">
-          <div class="generating-spinner w-10 h-10 shrink-0"></div>
-          <div>
-            <div class="font-semibold text-gray-800" id="generating-text">Generating intent...</div>
-            <div class="text-sm text-gray-500 mt-0.5">AI is analyzing your business data. This will only produce a recommendation — no actions will be taken.</div>
+      <!-- Health Ring -->
+      <div class="bg-white border border-gray-100 rounded-2xl shadow-sm p-5">
+        <div class="font-bold text-gray-800 mb-1">Business Health</div>
+        <div class="text-xs text-gray-400 mb-4">Overall score</div>
+        <div class="flex items-center justify-center mb-4">
+          <div class="relative w-28 h-28">
+            <svg viewBox="0 0 36 36" class="w-full h-full health-ring">
+              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#e2e8f0" stroke-width="3"/>
+              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#7c3aed" stroke-width="3" stroke-dasharray="${health.overall}, 100" stroke-linecap="round"/>
+            </svg>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span class="text-2xl font-bold text-gray-800">${health.overall}</span>
+              <span class="text-[10px] text-gray-400">/100</span>
+            </div>
           </div>
+        </div>
+        <div class="space-y-2">
+          ${[
+            {l:'Inventory',v:health.inventory||68,c:'emerald'},
+            {l:'Pricing',v:health.pricing||74,c:'amber'},
+            {l:'Marketing',v:health.marketing||65,c:'pink'},
+            {l:'Products',v:health.products||80,c:'blue'}
+          ].map(a=>`
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] text-gray-500 w-16 shrink-0">${a.l}</span>
+              <div class="flex-1 bg-gray-100 rounded-full h-1.5">
+                <div class="h-1.5 rounded-full bg-${a.c}-500" style="width:${a.v}%"></div>
+              </div>
+              <span class="text-[10px] text-gray-500 w-6 text-right">${a.v}</span>
+            </div>
+          `).join('')}
+        </div>
+        <button onclick="nav('health')" class="mt-4 w-full text-center text-xs text-violet-600 font-semibold hover:text-violet-700">
+          View Full Report →
+        </button>
+      </div>
+    </div>
+
+    <!-- Recent intents + Quick generate -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+          <div><div class="font-bold text-gray-800">Recent Intents</div><div class="text-xs text-gray-400">Latest AI recommendations</div></div>
+          <button onclick="nav('intents')" class="text-xs text-violet-600 font-semibold hover:text-violet-700">View all →</button>
+        </div>
+        <div class="divide-y divide-gray-50" id="dash-recent-intents">
+          <div class="p-4 text-center text-gray-400 text-sm">Loading...</div>
+        </div>
+      </div>
+      <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-50">
+          <div class="font-bold text-gray-800">Quick Generate</div>
+          <div class="text-xs text-gray-400">Instantly get an AI analysis</div>
+        </div>
+        <div class="p-4 grid grid-cols-2 gap-2">
+          ${[
+            {label:'Market Analysis',type:'market_trend',agent:'MarketResearchAgent',icon:'fa-chart-line',color:'violet'},
+            {label:'Pricing Review',type:'pricing_adjust',agent:'PricingAgent',icon:'fa-tags',color:'amber'},
+            {label:'Inventory Check',type:'inventory_restock',agent:'InventoryAgent',icon:'fa-boxes',color:'emerald'},
+            {label:'Email Campaign',type:'email_campaign',agent:'EmailMarketingAgent',icon:'fa-envelope',color:'pink'},
+            {label:'Product Ideas',type:'product_create',agent:'ProductCreationAgent',icon:'fa-lightbulb',color:'yellow'},
+            {label:'Health Report',type:'business_health',agent:'BusinessHealthAgent',icon:'fa-heartbeat',color:'red'}
+          ].map(q=>`
+            <button onclick="quickGenerate('${q.type}','${q.agent}')" class="flex items-center gap-2 bg-gray-50 hover:bg-${q.color}-50 border border-gray-100 hover:border-${q.color}-200 rounded-xl p-3 text-left transition-colors group">
+              <div class="w-7 h-7 rounded-lg bg-${q.color}-100 flex items-center justify-center shrink-0">
+                <i class="fas ${q.icon} text-${q.color}-600 text-xs"></i>
+              </div>
+              <span class="text-xs font-medium text-gray-600 group-hover:text-gray-800">${q.label}</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Load recent intents
+  const recRes = await api.get('/intents?limit=5');
+  const recent = recRes.data||[];
+  const el = document.getElementById('dash-recent-intents');
+  if(el) {
+    el.innerHTML = recent.length===0
+      ? '<div class="p-5 text-center text-gray-400 text-sm">No intents yet — generate one!</div>'
+      : recent.map(i=>`
+        <div class="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors" onclick="openIntent('${i.id}')">
+          <div class="w-8 h-8 rounded-lg ${iBg(i.type)} flex items-center justify-center shrink-0">
+            <i class="fas ${iIcon(i.type)} ${iColor(i.type)} text-xs"></i>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-xs font-semibold text-gray-700 truncate">${esc(i.summary)}</div>
+            <div class="text-[10px] text-gray-400">${fmtType(i.type)} · ${ago(i.createdAt)}</div>
+          </div>
+          <span class="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${i.status==='pending'?'bg-violet-100 text-violet-600':i.status==='approved'?'bg-emerald-100 text-emerald-600':'bg-gray-100 text-gray-500'}">${i.status}</span>
+        </div>
+      `).join('');
+  }
+}
+
+async function quickGenerate(intentType, agentName) {
+  toast('Generating intent...','info');
+  const r = await api.post('/intents/generate',{intentType,agentName});
+  if(r.success) {
+    S.intents.unshift(r.data);
+    toast('✅ New intent generated — check Today\'s Priorities','success');
+    await refreshStats();
+    openIntent(r.data.id);
+  } else { toast('Generation failed','error'); }
+}
+window.quickGenerate = quickGenerate;
+
+// ================================================================
+// INTENT QUEUE
+// ================================================================
+async function renderIntents() {
+  const res = await api.get('/intents?limit=100');
+  S.intents = res.data||[];
+
+  document.getElementById('content').innerHTML = `
+    <!-- Filters -->
+    <div class="bg-white border border-gray-100 rounded-2xl shadow-sm p-4 mb-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="relative flex-1 min-w-[180px]">
+          <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+          <input id="intent-search" type="text" placeholder="Search intents..." value="${esc(S.intentSearch)}"
+            class="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-300"
+            oninput="S.intentSearch=this.value;renderIntentList()">
+        </div>
+        <div class="flex gap-1.5 flex-wrap">
+          ${['all','pending','approved','rejected','modified'].map(f=>`
+            <button onclick="S.intentFilter='${f}';document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');renderIntentList()"
+              class="filter-btn tab-btn text-[11px] px-3 py-1.5 rounded-lg font-medium text-gray-500 hover:bg-gray-100 transition-colors ${S.intentFilter===f?'active':''}">
+              ${f.charAt(0).toUpperCase()+f.slice(1)}
+            </button>
+          `).join('')}
+        </div>
+        <div class="flex gap-2 ml-auto">
+          <button onclick="batchApprove('low')" class="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-xl font-semibold hover:bg-emerald-100 transition-colors">
+            <i class="fas fa-check-double mr-1"></i>Approve All Low-Risk
+          </button>
+          <button onclick="nav('generate')" class="text-xs bg-violet-600 text-white px-3 py-1.5 rounded-xl font-semibold hover:bg-violet-700 transition-colors">
+            <i class="fas fa-magic mr-1"></i>Generate
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="intent-list"></div>
+  `;
+
+  renderIntentList();
+}
+
+function renderIntentList() {
+  let filtered = S.intents;
+  if(S.intentFilter!=='all') filtered = filtered.filter(i=>i.status===S.intentFilter);
+  if(S.intentSearch) {
+    const q = S.intentSearch.toLowerCase();
+    filtered = filtered.filter(i=>i.summary?.toLowerCase().includes(q)||i.type?.includes(q)||i.generatedBy?.toLowerCase().includes(q));
+  }
+  const el = document.getElementById('intent-list');
+  if(!el) return;
+  if(filtered.length===0) {
+    el.innerHTML = `<div class="bg-white rounded-2xl border border-gray-100 p-12 text-center"><i class="fas fa-inbox text-4xl text-gray-200 mb-3 block"></i><div class="text-gray-400 text-sm">No intents found for this filter.</div></div>`;
+    return;
+  }
+  el.innerHTML = `<div class="space-y-3">${filtered.map(i=>intentCardHTML(i)).join('')}</div>`;
+}
+
+// ================================================================
+// AGENT CONTROL CENTER
+// ================================================================
+async function renderAgents() {
+  const r = await api.get('/agents');
+  S.agents = r.data||[];
+
+  document.getElementById('content').innerHTML = `
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      ${S.agents.map(a=>`
+        <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden agent-glow">
+          <div class="p-4 border-b border-gray-50">
+            <div class="flex items-start gap-3">
+              <div class="w-10 h-10 rounded-xl bg-${AGENT_COLORS[a.id]||'gray'}-100 flex items-center justify-center shrink-0">
+                <i class="fas ${AGENT_ICONS[a.id]||'fa-robot'} text-${AGENT_COLORS[a.id]||'gray'}-600 text-sm"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-bold text-gray-800 text-sm">${esc(a.displayName)}</span>
+                  <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold ${a.isActive?'bg-emerald-100 text-emerald-600':'bg-gray-100 text-gray-400'}">
+                    ${a.isActive?'Active':'Inactive'}
+                  </span>
+                </div>
+                <div class="text-xs text-gray-400 mt-0.5">${esc(a.description)}</div>
+              </div>
+              <button onclick="toggleAgent('${a.id}',${!a.isActive})" class="shrink-0 text-xs px-3 py-1.5 rounded-xl font-semibold transition-colors ${a.isActive?'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600':'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
+                ${a.isActive?'Pause':'Enable'}
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="grid grid-cols-3 gap-2 mb-3 text-center">
+              <div><div class="text-base font-bold text-gray-800">${a.totalIntentsGenerated||0}</div><div class="text-[10px] text-gray-400">Intents</div></div>
+              <div><div class="text-base font-bold text-${a.successRate>=85?'emerald':a.successRate>=70?'amber':'red'}-600">${a.successRate||0}%</div><div class="text-[10px] text-gray-400">Success</div></div>
+              <div><div class="text-base font-bold text-gray-800">${a.intentTypes.length}</div><div class="text-[10px] text-gray-400">Types</div></div>
+            </div>
+            <div class="flex flex-wrap gap-1 mb-3">
+              ${a.responsibilities.map(r=>`<span class="bg-gray-50 text-gray-500 text-[10px] px-2 py-0.5 rounded-lg border border-gray-100">${esc(r)}</span>`).join('')}
+            </div>
+            <div class="flex gap-2">
+              <button onclick="generateFromAgent('${a.id}')" class="flex-1 bg-${AGENT_COLORS[a.id]||'gray'}-600 hover:opacity-90 text-white text-xs font-bold px-3 py-2 rounded-xl transition-opacity ${!a.isActive?'opacity-50 cursor-not-allowed':''}">
+                <i class="fas fa-magic mr-1.5"></i>Generate Intent
+              </button>
+              <button onclick="openAgentDetail('${a.id}')" class="px-3 py-2 rounded-xl bg-gray-100 text-gray-600 text-xs font-semibold hover:bg-gray-200 transition-colors">
+                <i class="fas fa-info"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function toggleAgent(id, active) {
+  const r = await api.patch(`/agents/${id}`,{isActive:active});
+  if(r.success) { toast(`Agent ${active?'enabled':'paused'}`,'info'); renderAgents(); }
+}
+window.toggleAgent = toggleAgent;
+
+async function generateFromAgent(agentId) {
+  const agent = S.agents.find(a=>a.id===agentId);
+  if(!agent||!agent.isActive) { toast('This agent is paused','warning'); return; }
+  const types = agent.intentTypes;
+  const intentType = types[Math.floor(Math.random()*types.length)];
+  toast(`${agent.displayName} is analyzing...`,'info');
+  const r = await api.post('/intents/generate',{agentName:agentId,intentType});
+  if(r.success) {
+    S.intents.unshift(r.data);
+    toast(`✅ Intent generated by ${agent.displayName}`,'success');
+    await refreshStats();
+    openIntent(r.data.id);
+  } else { toast('Generation failed: '+r.error,'error'); }
+}
+window.generateFromAgent = generateFromAgent;
+
+async function openAgentDetail(id) {
+  const r = await api.get(`/agents/${id}`);
+  if(!r.success) return;
+  const {agent, recentIntents} = r.data;
+  openModal(`
+    <div class="p-5">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-12 h-12 rounded-xl bg-${AGENT_COLORS[id]||'gray'}-100 flex items-center justify-center">
+          <i class="fas ${AGENT_ICONS[id]||'fa-robot'} text-${AGENT_COLORS[id]||'gray'}-600 text-lg"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-gray-800 text-lg">${esc(agent.displayName)}</h3>
+          <p class="text-sm text-gray-400">${esc(agent.description)}</p>
+        </div>
+        <button onclick="closeModal()" class="ml-auto text-gray-400 hover:text-gray-600 text-xl"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="mb-4">
+        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Responsibilities</div>
+        <div class="flex flex-wrap gap-2">${agent.responsibilities.map(r=>`<span class="bg-${AGENT_COLORS[id]||'gray'}-50 text-${AGENT_COLORS[id]||'gray'}-600 text-xs px-3 py-1 rounded-lg border border-${AGENT_COLORS[id]||'gray'}-100">${esc(r)}</span>`).join('')}</div>
+      </div>
+      <div class="mb-4">
+        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Can Generate</div>
+        <div class="flex flex-wrap gap-1.5">${agent.intentTypes.map(t=>`<span class="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-lg">${fmtType(t)}</span>`).join('')}</div>
+      </div>
+      <div>
+        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Recent Intents</div>
+        ${recentIntents?.length>0
+          ? recentIntents.slice(0,5).map(i=>`
+              <div class="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0 cursor-pointer hover:bg-gray-50 rounded-lg px-2" onclick="closeModal();openIntent('${i.id}')">
+                <div class="w-7 h-7 rounded-lg ${iBg(i.type)} flex items-center justify-center shrink-0"><i class="fas ${iIcon(i.type)} ${iColor(i.type)} text-xs"></i></div>
+                <div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-700 truncate">${esc(i.summary)}</div><div class="text-[10px] text-gray-400">${fmtType(i.type)} · ${ago(i.createdAt)}</div></div>
+                <span class="text-[10px] px-2 py-0.5 rounded-full ${i.status==='pending'?'bg-violet-100 text-violet-600':i.status==='approved'?'bg-emerald-100 text-emerald-600':'bg-gray-100 text-gray-500'}">${i.status}</span>
+              </div>
+          `).join('')
+          : '<div class="text-sm text-gray-400 text-center py-4">No intents yet</div>'
+        }
+      </div>
+    </div>
+  `);
+}
+window.openAgentDetail = openAgentDetail;
+
+// ================================================================
+// GENERATE INTENT
+// ================================================================
+async function renderGenerate() {
+  const r = await api.get('/agents');
+  S.agents = r.data||[];
+  const pr = await api.get('/business/profile');
+  S.profile = pr.data||{niche:'e-commerce'};
+
+  document.getElementById('content').innerHTML = `
+    <div class="max-w-2xl mx-auto">
+      <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+        <div class="page-header p-5 text-white">
+          <div class="flex items-center gap-2 mb-1">
+            <i class="fas fa-magic text-violet-200"></i>
+            <span class="font-bold">AI Intent Generator</span>
+          </div>
+          <p class="text-violet-200 text-sm">Select an agent and intent type. Your AI will analyze and generate a structured recommendation for your review.</p>
+          <div class="mt-3 flex items-center gap-2 text-xs bg-white/10 rounded-xl px-3 py-2 w-fit">
+            <i class="fas fa-shield-alt text-emerald-300"></i>
+            <span class="text-emerald-200">Safe Mode: Generates INTENTS only — no automatic actions</span>
+          </div>
+        </div>
+        <div class="p-5">
+          <div class="mb-4">
+            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-2">Select AI Agent</label>
+            <div class="grid grid-cols-1 gap-2" id="agent-selector">
+              ${S.agents.map(a=>`
+                <label class="flex items-center gap-3 border-2 border-gray-100 rounded-xl p-3 cursor-pointer hover:border-${AGENT_COLORS[a.id]||'gray'}-200 transition-colors has-[:checked]:border-${AGENT_COLORS[a.id]||'gray'}-400 has-[:checked]:bg-${AGENT_COLORS[a.id]||'gray'}-50">
+                  <input type="radio" name="gen-agent" value="${a.id}" class="sr-only" onchange="updateIntentTypes('${a.id}')">
+                  <div class="w-8 h-8 rounded-lg bg-${AGENT_COLORS[a.id]||'gray'}-100 flex items-center justify-center shrink-0">
+                    <i class="fas ${AGENT_ICONS[a.id]||'fa-robot'} text-${AGENT_COLORS[a.id]||'gray'}-600 text-sm"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-semibold text-gray-700">${esc(a.displayName)}</div>
+                    <div class="text-[10px] text-gray-400">${esc(a.description.substring(0,70))}...</div>
+                  </div>
+                  ${!a.isActive ? '<span class="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full shrink-0">Paused</span>' : ''}
+                </label>
+              `).join('')}
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-2">Intent Type</label>
+            <select id="gen-type" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+              <option value="">— Select an agent first —</option>
+            </select>
+          </div>
+
+          <div class="mb-5">
+            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-2">Additional Context <span class="text-gray-300 font-normal">(optional)</span></label>
+            <textarea id="gen-context" class="w-full border border-gray-200 rounded-xl p-3 text-sm h-20 resize-none focus:outline-none focus:ring-2 focus:ring-violet-300" placeholder="e.g. Focus on our top 3 products, Q2 strategy, or competitor XYZ..."></textarea>
+          </div>
+
+          <button onclick="submitGenerate()" id="gen-btn" class="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold px-5 py-3.5 rounded-xl transition-colors text-sm flex items-center justify-center gap-2">
+            <i class="fas fa-magic"></i>
+            <span>Generate Intent Now</span>
+          </button>
+
+          <div id="gen-result"></div>
+        </div>
+      </div>
+
+      <!-- What happens next -->
+      <div class="bg-gray-50 border border-gray-100 rounded-2xl p-5 mt-4">
+        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">What Happens Next</div>
+        <div class="space-y-2">
+          ${[
+            ['fa-brain text-violet-500','AI agent analyzes your business context'],
+            ['fa-file-alt text-blue-500','A structured INTENT is generated with reasoning, steps, and risk level'],
+            ['fa-user-check text-emerald-500','You review and Approve, Modify, or Reject'],
+            ['fa-check-circle text-emerald-500','Only approved intents become actionable — nothing happens automatically']
+          ].map(([ic,t])=>`
+            <div class="flex items-center gap-3 text-sm text-gray-600">
+              <i class="fas ${ic} w-5 text-center shrink-0"></i>
+              <span>${t}</span>
+            </div>
+          `).join('')}
         </div>
       </div>
     </div>
   `;
 }
 
-let selectedIntentType = 'market_analysis';
-
-function selectIntentType(type) {
-  selectedIntentType = type;
-  document.querySelectorAll('.intent-type-btn').forEach(btn => {
-    btn.classList.toggle('ring-2', btn.dataset.type === type);
-    btn.classList.toggle('ring-violet-500', btn.dataset.type === type);
-  });
-  const label = document.querySelector(`[data-type="${type}"]`)?.querySelector('.font-medium')?.textContent ?? type;
-  document.getElementById('selected-type-display').innerHTML = `
-    <i class="fas fa-check-circle text-violet-500 mr-1"></i>
-    Selected: <strong class="text-violet-700">${label}</strong>
-  `;
+function updateIntentTypes(agentId) {
+  const sel = document.getElementById('gen-type');
+  if(!sel) return;
+  const types = INTENT_TYPES_BY_AGENT[agentId]||[];
+  sel.innerHTML = types.map(t=>`<option value="${t}">${fmtType(t)}</option>`).join('');
 }
+window.updateIntentTypes = updateIntentTypes;
 
-async function generateIntent() {
-  if (State.generating) return;
-  State.generating = true;
+async function submitGenerate() {
+  const agentEl = document.querySelector('input[name="gen-agent"]:checked');
+  const typeEl = document.getElementById('gen-type');
+  const ctxEl = document.getElementById('gen-context');
+  const btn = document.getElementById('gen-btn');
+  const resEl = document.getElementById('gen-result');
 
-  const btn = document.getElementById('generate-btn');
-  const status = document.getElementById('generating-status');
+  if(!agentEl) { toast('Please select an AI agent','warning'); return; }
+  if(!typeEl?.value) { toast('Please select an intent type','warning'); return; }
+
+  const agentName = agentEl.value;
+  const intentType = typeEl.value;
+  const ctx = ctxEl?.value?.trim()||'';
+
   btn.disabled = true;
-  btn.innerHTML = '<div class="generating-spinner w-5 h-5"></div><span>Generating...</span>';
-  status?.classList.remove('hidden');
+  btn.innerHTML = '<div class="spinner w-5 h-5"></div><span>Generating...</span>';
+  if(resEl) resEl.innerHTML = '';
 
-  const context = {
-    product: document.getElementById('ctx-product')?.value ?? '',
-    priceRange: document.getElementById('ctx-price')?.value ?? '',
-    competitors: document.getElementById('ctx-competitors')?.value ?? '',
-    challenge: document.getElementById('ctx-challenge')?.value ?? '',
-    notes: document.getElementById('ctx-notes')?.value ?? ''
-  };
+  const r = await api.post('/intents/generate',{
+    agentName, intentType,
+    context: ctx ? {userNote: ctx} : {}
+  });
 
-  const animTexts = [
-    'AI is analyzing your market...',
-    'Building structured recommendations...',
-    'Assessing risk levels...',
-    'Generating step-by-step guidance...',
-    'Almost done...'
-  ];
-  let textIdx = 0;
-  const textInterval = setInterval(() => {
-    const el = document.getElementById('generating-text');
-    if (el) el.textContent = animTexts[textIdx++ % animTexts.length];
-  }, 1500);
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fas fa-magic"></i><span>Generate Intent Now</span>';
 
-  try {
-    const r = await API.post('/intents/generate', {
-      intentType: selectedIntentType ?? 'market_analysis',
-      context
-    });
-
-    clearInterval(textInterval);
-    State.generating = false;
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-magic"></i><span>Generate Intent</span>';
-    status?.classList.add('hidden');
-
-    if (r.success) {
-      State.intents.unshift(r.data);
-      toast('✅ Intent generated! Redirecting to queue...', 'success');
-      setTimeout(() => navigate('intents'), 1000);
-    } else {
-      toast(r.error ?? 'Generation failed', 'error');
+  if(r.success) {
+    S.intents.unshift(r.data);
+    toast('✅ Intent generated successfully!','success');
+    await refreshStats();
+    if(resEl) {
+      resEl.innerHTML = `
+        <div class="mt-4 bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <div class="flex items-center gap-2 mb-2">
+            <i class="fas fa-check-circle text-emerald-500"></i>
+            <span class="text-sm font-bold text-emerald-700">Intent Generated!</span>
+          </div>
+          <div class="text-sm text-emerald-600 mb-3">${esc(r.data.summary)}</div>
+          <button onclick="openIntent('${r.data.id}')" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold py-2.5 rounded-xl transition-colors">
+            <i class="fas fa-eye mr-2"></i>Review & Decide
+          </button>
+        </div>
+      `;
     }
-  } catch (err) {
-    clearInterval(textInterval);
-    State.generating = false;
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-magic"></i><span>Generate Intent</span>';
-    status?.classList.add('hidden');
-    toast('Network error — please try again', 'error');
-  }
-}
-
-async function quickGenerate(intentType) {
-  const r = await API.post('/intents/generate', { intentType, context: {} });
-  if (r.success) {
-    State.intents.unshift(r.data);
-    toast('✅ Intent generated!', 'success');
-    navigate('intents');
   } else {
-    toast(r.error ?? 'Failed to generate', 'error');
+    if(resEl) resEl.innerHTML = `<div class="mt-4 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${esc(r.error||'Generation failed')}</div>`;
+    toast('Generation failed: '+(r.error||'Unknown error'),'error');
   }
 }
+window.submitGenerate = submitGenerate;
 
-// ============================================================
-// SCHEDULES PAGE
-// ============================================================
+// ================================================================
+// WORKFLOWS
+// ================================================================
+async function renderWorkflows() {
+  const r = await api.get('/workflows');
+  S.workflows = r.data||[];
 
-async function renderSchedulesPage() {
-  const r = await API.get('/schedules');
-  State.schedules = r.data ?? [];
+  const statusColors = {active:'emerald',draft:'gray',completed:'blue',paused:'amber'};
 
-  document.getElementById('app-content').innerHTML = `
-    <div class="mb-6 flex items-center justify-between">
+  document.getElementById('content').innerHTML = `
+    <div class="flex items-center justify-between mb-4">
       <div>
-        <p class="text-sm text-gray-500 mt-1">Schedules generate intents automatically. You still review and approve everything.</p>
+        <div class="text-sm text-gray-500">Multi-step guided processes. Each step generates an intent for your approval.</div>
       </div>
-      <button onclick="openNewScheduleModal()" class="btn bg-violet-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-violet-700">
-        <i class="fas fa-plus mr-2"></i>New Schedule
+      <button onclick="openCreateWorkflow()" class="bg-violet-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-violet-700 transition-colors">
+        <i class="fas fa-plus mr-1.5"></i>New Workflow
       </button>
     </div>
 
-    <!-- Schedule Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      ${State.schedules.map(s => scheduleCard(s)).join('')}
-      ${State.schedules.length === 0 ? `
-        <div class="col-span-3 text-center py-16 text-gray-400">
-          <i class="fas fa-calendar-times text-5xl mb-4 block opacity-30"></i>
-          <p class="font-medium">No schedules yet</p>
-          <p class="text-sm mt-1">Create a schedule to automate AI analysis</p>
+    <div class="space-y-4">
+      ${S.workflows.length===0 ? `
+        <div class="bg-white rounded-2xl border border-gray-100 p-12 text-center">
+          <i class="fas fa-project-diagram text-4xl text-gray-200 mb-3 block"></i>
+          <div class="text-gray-500 font-semibold">No workflows yet</div>
+          <p class="text-gray-400 text-sm mt-1 mb-4">Create a multi-step workflow to guide your team through complex business processes.</p>
+          <button onclick="openCreateWorkflow()" class="bg-violet-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-violet-700">
+            <i class="fas fa-plus mr-2"></i>Create First Workflow
+          </button>
         </div>
-      ` : ''}
+      ` : S.workflows.map(wf=>`
+        <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+          <div class="p-4 border-b border-gray-50">
+            <div class="flex items-start justify-between">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1 flex-wrap">
+                  <span class="font-bold text-gray-800">${esc(wf.name)}</span>
+                  <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-${statusColors[wf.status]||'gray'}-100 text-${statusColors[wf.status]||'gray'}-600">${wf.status}</span>
+                  ${wf.tags?.map(t=>`<span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-md">${esc(t)}</span>`).join('')||''}
+                </div>
+                <div class="text-xs text-gray-400">${esc(wf.description)}</div>
+              </div>
+              <div class="flex gap-2 shrink-0 ml-3">
+                ${wf.status!=='completed' ? `
+                  <button onclick="runWorkflowStep('${wf.id}')" class="text-xs bg-violet-600 text-white px-3 py-1.5 rounded-xl font-semibold hover:bg-violet-700 transition-colors">
+                    <i class="fas fa-play mr-1"></i>Run Next Step
+                  </button>
+                ` : `<span class="text-xs text-emerald-600 font-semibold flex items-center gap-1"><i class="fas fa-check-circle"></i> Complete</span>`}
+                <button onclick="deleteWorkflow('${wf.id}')" class="text-xs text-red-400 hover:text-red-600 transition-colors px-2 py-1.5"><i class="fas fa-trash"></i></button>
+              </div>
+            </div>
+          </div>
+          <div class="p-4">
+            <!-- Progress bar -->
+            <div class="flex items-center gap-3 mb-4">
+              <div class="flex-1 bg-gray-100 rounded-full h-2">
+                <div class="bg-violet-500 h-2 rounded-full transition-all" style="width:${wf.progress||0}%"></div>
+              </div>
+              <span class="text-xs text-gray-400 shrink-0">${wf.progress||0}%</span>
+              <span class="text-xs text-gray-400 shrink-0">${wf.approvedIntents||0}/${wf.totalIntents||0} approved</span>
+            </div>
+            <!-- Steps -->
+            <div class="space-y-2">
+              ${wf.steps.map((step,idx)=>`
+                <div class="flex items-center gap-3 ${idx===wf.currentStepIndex&&wf.status!=='completed'?'bg-violet-50 border border-violet-200':'bg-gray-50 border border-gray-100'} rounded-xl p-3">
+                  <div class="w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${step.status==='done'?'bg-emerald-100 text-emerald-600':step.status==='in_progress'?'bg-violet-100 text-violet-600':'bg-gray-100 text-gray-400'}">
+                    <i class="fas ${step.status==='done'?'fa-check':step.status==='in_progress'?'fa-spinner fa-spin':'fa-circle text-[8px]'} text-xs"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-xs font-semibold text-gray-700">${esc(step.label)}</div>
+                    <div class="text-[10px] text-gray-400">${esc(step.description)}</div>
+                  </div>
+                  <div class="flex items-center gap-1.5 shrink-0">
+                    <div class="w-5 h-5 rounded-md bg-${AGENT_COLORS[step.agentName]||'gray'}-100 flex items-center justify-center">
+                      <i class="fas ${AGENT_ICONS[step.agentName]||'fa-robot'} text-${AGENT_COLORS[step.agentName]||'gray'}-600 text-[10px]"></i>
+                    </div>
+                    ${idx===wf.currentStepIndex&&wf.status!=='completed' ? `<span class="text-[10px] text-violet-600 font-semibold">Current</span>` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function runWorkflowStep(wfId) {
+  toast('Running next workflow step...','info');
+  const r = await api.post(`/workflows/${wfId}/run-step`,{});
+  if(r.success) {
+    toast(r.message||'Step complete!','success');
+    S.workflows = S.workflows.map(w=>w.id===wfId?{...w,progress:r.data.progress,status:r.data.isComplete?'completed':w.status}:w);
+    openIntent(r.data.intent.id);
+    renderWorkflows();
+  } else { toast('Step failed: '+(r.error||'Unknown'),'error'); }
+}
+window.runWorkflowStep = runWorkflowStep;
+
+async function deleteWorkflow(id) {
+  if(!confirm('Delete this workflow?')) return;
+  const r = await api.del(`/workflows/${id}`);
+  if(r.success) { toast('Workflow deleted','info'); renderWorkflows(); }
+}
+window.deleteWorkflow = deleteWorkflow;
+
+function openCreateWorkflow() {
+  const agentList = Object.keys(INTENT_TYPES_BY_AGENT);
+  openModal(`
+    <div class="p-5">
+      <h3 class="font-bold text-gray-800 text-lg mb-1"><i class="fas fa-project-diagram text-violet-500 mr-2"></i>Create New Workflow</h3>
+      <p class="text-sm text-gray-400 mb-4">Build a multi-step process. Each step will ask an AI agent to generate an intent for your approval.</p>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Workflow Name</label>
+          <input id="wf-name" type="text" placeholder="e.g. New Product Launch" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Description</label>
+          <input id="wf-desc" type="text" placeholder="Brief description of this workflow" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Agents Involved</label>
+          <div class="flex flex-wrap gap-2">
+            ${agentList.map(a=>`
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" name="wf-agents" value="${a}" class="rounded accent-violet-600">
+                <span class="text-xs font-medium text-gray-600">${a.replace('Agent','')}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="flex gap-2 mt-5">
+        <button onclick="submitCreateWorkflow()" class="flex-1 bg-violet-600 hover:bg-violet-700 text-white font-bold px-4 py-3 rounded-xl text-sm transition-colors">
+          <i class="fas fa-plus mr-2"></i>Create Workflow
+        </button>
+        <button onclick="closeModal()" class="px-4 py-3 rounded-xl bg-gray-100 text-gray-600 text-sm font-semibold hover:bg-gray-200">Cancel</button>
+      </div>
+    </div>
+  `);
+}
+window.openCreateWorkflow = openCreateWorkflow;
+
+async function submitCreateWorkflow() {
+  const name = document.getElementById('wf-name')?.value?.trim();
+  const desc = document.getElementById('wf-desc')?.value?.trim();
+  const checked = [...document.querySelectorAll('input[name="wf-agents"]:checked')].map(el=>el.value);
+  if(!name) { toast('Please enter a workflow name','warning'); return; }
+  const steps = checked.map((agent,i)=>({
+    id:`step-${i}`, label:`${agent.replace('Agent','')} Analysis`, description:`Run ${agent.replace('Agent','')} agent`, status:'pending', agentName:agent, order:i+1
+  }));
+  const r = await api.post('/workflows',{name,description:desc,agentsInvolved:checked,steps,triggerType:'manual'});
+  if(r.success) { toast('✅ Workflow created','success'); closeModal(); renderWorkflows(); }
+  else toast('Failed to create workflow','error');
+}
+window.submitCreateWorkflow = submitCreateWorkflow;
+
+// ================================================================
+// SCHEDULES
+// ================================================================
+async function renderSchedules() {
+  const r = await api.get('/schedules');
+  S.schedules = r.data||[];
+
+  const freqColor = {daily:'emerald',weekly:'blue',biweekly:'violet',monthly:'amber',quarterly:'indigo'};
+
+  document.getElementById('content').innerHTML = `
+    <div class="flex items-center justify-between mb-4">
+      <div class="text-sm text-gray-500">Schedules automatically generate intents for your review — nothing executes automatically.</div>
+      <button onclick="openCreateSchedule()" class="bg-violet-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-violet-700 transition-colors">
+        <i class="fas fa-plus mr-1.5"></i>New Schedule
+      </button>
     </div>
 
-    <!-- Example Schedules Guide -->
-    <div class="mt-8 bg-gradient-to-r from-violet-50 to-purple-50 rounded-2xl p-6 border border-violet-100">
-      <h4 class="font-semibold text-violet-800 mb-3">
-        <i class="fas fa-lightbulb mr-2 text-violet-500"></i>Recommended Schedule Setup
-      </h4>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        ${[
-          { freq: 'Daily', time: 'Every morning 7am', type: 'Competitor Scan', icon: 'fa-search', note: 'Catch competitor moves before you start your day' },
-          { freq: 'Weekly', time: 'Every Wednesday 9am', type: 'Market Analysis', icon: 'fa-chart-line', note: 'Mid-week market pulse for strategic adjustments' },
-          { freq: 'Weekly', time: 'Every Saturday 10am', type: 'Performance Review', icon: 'fa-tachometer-alt', note: 'Weekly business health check before the weekend' }
-        ].map(rec => `
-          <div class="bg-white rounded-xl p-4 border border-violet-100">
-            <i class="fas ${rec.icon} text-violet-500 mb-2 block"></i>
-            <div class="font-medium text-gray-800 text-sm">${rec.freq}: ${rec.type}</div>
-            <div class="text-xs text-violet-600 mt-0.5">${rec.time}</div>
-            <div class="text-xs text-gray-500 mt-2">${rec.note}</div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      ${S.schedules.length===0 ? `
+        <div class="col-span-2 bg-white rounded-2xl border border-gray-100 p-12 text-center">
+          <i class="fas fa-calendar-alt text-4xl text-gray-200 mb-3 block"></i>
+          <div class="text-gray-500 font-semibold">No schedules yet</div>
+          <button onclick="openCreateSchedule()" class="mt-4 bg-violet-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-violet-700">
+            <i class="fas fa-plus mr-2"></i>Create First Schedule
+          </button>
+        </div>
+      ` : S.schedules.map(s=>`
+        <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+          <div class="p-4">
+            <div class="flex items-start justify-between mb-3">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap mb-1">
+                  <span class="font-bold text-gray-800 text-sm">${esc(s.name)}</span>
+                  <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-${freqColor[s.frequency]||'gray'}-100 text-${freqColor[s.frequency]||'gray'}-600">${s.frequency}</span>
+                  <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold ${s.isActive?'bg-emerald-100 text-emerald-600':'bg-gray-100 text-gray-400'}">
+                    ${s.isActive?'Active':'Paused'}
+                  </span>
+                </div>
+                <div class="text-xs text-gray-400">${esc(s.description)}</div>
+              </div>
+              <div class="flex gap-1 shrink-0 ml-2">
+                <button onclick="runSchedule('${s.id}')" title="Run Now" class="w-8 h-8 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center hover:bg-violet-100 transition-colors text-xs">
+                  <i class="fas fa-play"></i>
+                </button>
+                <button onclick="toggleSchedule('${s.id}',${!s.isActive})" title="${s.isActive?'Pause':'Enable'}" class="w-8 h-8 rounded-xl ${s.isActive?'bg-amber-50 text-amber-600':'bg-emerald-50 text-emerald-600'} flex items-center justify-center hover:opacity-80 transition-opacity text-xs">
+                  <i class="fas ${s.isActive?'fa-pause':'fa-play-circle'}"></i>
+                </button>
+                <button onclick="deleteSchedule('${s.id}')" class="w-8 h-8 rounded-xl bg-red-50 text-red-400 flex items-center justify-center hover:bg-red-100 transition-colors text-xs">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-3 mb-3">
+              <div><div class="text-sm font-bold text-gray-700">${s.totalRuns||0}</div><div class="text-[10px] text-gray-400">Runs</div></div>
+              <div><div class="text-sm font-bold text-gray-700">${s.intentsGenerated||0}</div><div class="text-[10px] text-gray-400">Intents</div></div>
+              <div><div class="text-sm font-bold text-gray-700">${s.hour!=null?formatHour(s.hour):'—'}</div><div class="text-[10px] text-gray-400">Time</div></div>
+            </div>
+            <div class="flex items-center justify-between text-xs text-gray-400">
+              <span><i class="fas fa-history mr-1"></i>Last: ${s.lastRun?ago(s.lastRun):'Never'}</span>
+              <span><i class="fas fa-clock mr-1"></i>Next: ${fmtDateShort(s.nextRun)}</span>
+            </div>
+            ${s.agentName ? `
+              <div class="mt-2 flex items-center gap-1.5">
+                <div class="w-5 h-5 rounded bg-${AGENT_COLORS[s.agentName]||'gray'}-100 flex items-center justify-center">
+                  <i class="fas ${AGENT_ICONS[s.agentName]||'fa-robot'} text-${AGENT_COLORS[s.agentName]||'gray'}-600 text-[9px]"></i>
+                </div>
+                <span class="text-[10px] text-gray-500">${s.agentName.replace('Agent',' Agent')}</span>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function formatHour(h) { const ampm = h<12?'AM':'PM'; return (h%12||12)+':00 '+ampm; }
+
+async function runSchedule(id) {
+  toast('Running schedule...','info');
+  const r = await api.post(`/schedules/${id}/run`,{});
+  if(r.success) {
+    toast(`✅ Schedule ran! Intent generated for review.`,'success');
+    S.intents.unshift(r.data.intent);
+    openIntent(r.data.intent.id);
+    renderSchedules();
+  } else { toast('Run failed: '+(r.error||'Unknown'),'error'); }
+}
+window.runSchedule = runSchedule;
+
+async function toggleSchedule(id, active) {
+  const r = await api.patch(`/schedules/${id}`,{isActive:active});
+  if(r.success) { toast(`Schedule ${active?'enabled':'paused'}`,'info'); renderSchedules(); }
+}
+window.toggleSchedule = toggleSchedule;
+
+async function deleteSchedule(id) {
+  if(!confirm('Delete this schedule?')) return;
+  const r = await api.del(`/schedules/${id}`);
+  if(r.success) { toast('Schedule deleted','info'); renderSchedules(); }
+}
+window.deleteSchedule = deleteSchedule;
+
+function openCreateSchedule() {
+  const agentList = Object.keys(INTENT_TYPES_BY_AGENT);
+  openModal(`
+    <div class="p-5">
+      <h3 class="font-bold text-gray-800 text-lg mb-1"><i class="fas fa-calendar-plus text-violet-500 mr-2"></i>Create Schedule</h3>
+      <p class="text-sm text-gray-400 mb-4">Set up a recurring AI task. It will automatically generate intents for your review — never execute anything.</p>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Name</label>
+          <input id="sc-name" type="text" placeholder="e.g. Daily Inventory Check" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">AI Agent</label>
+            <select id="sc-agent" onchange="updateSchedTypes()" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+              ${agentList.map(a=>`<option value="${a}">${a.replace('Agent','')} Agent</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Intent Type</label>
+            <select id="sc-type" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+              ${(INTENT_TYPES_BY_AGENT[agentList[0]]||[]).map(t=>`<option value="${t}">${fmtType(t)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Frequency</label>
+            <select id="sc-freq" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="biweekly">Bi-weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Hour (24h)</label>
+            <input id="sc-hour" type="number" min="0" max="23" value="9" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+          </div>
+        </div>
+      </div>
+      <div class="flex gap-2 mt-5">
+        <button onclick="submitCreateSchedule()" class="flex-1 bg-violet-600 hover:bg-violet-700 text-white font-bold px-4 py-3 rounded-xl text-sm transition-colors">
+          <i class="fas fa-calendar-plus mr-2"></i>Create Schedule
+        </button>
+        <button onclick="closeModal()" class="px-4 py-3 rounded-xl bg-gray-100 text-gray-600 text-sm font-semibold hover:bg-gray-200">Cancel</button>
+      </div>
+    </div>
+  `);
+  setTimeout(()=>updateSchedTypes(),50);
+}
+window.openCreateSchedule = openCreateSchedule;
+
+function updateSchedTypes() {
+  const agent = document.getElementById('sc-agent')?.value;
+  const sel = document.getElementById('sc-type');
+  if(!sel||!agent) return;
+  const types = INTENT_TYPES_BY_AGENT[agent]||[];
+  sel.innerHTML = types.map(t=>`<option value="${t}">${fmtType(t)}</option>`).join('');
+}
+window.updateSchedTypes = updateSchedTypes;
+
+async function submitCreateSchedule() {
+  const name = document.getElementById('sc-name')?.value?.trim();
+  const agentName = document.getElementById('sc-agent')?.value;
+  const intentType = document.getElementById('sc-type')?.value;
+  const frequency = document.getElementById('sc-freq')?.value;
+  const hour = parseInt(document.getElementById('sc-hour')?.value||'9');
+  if(!name) { toast('Please enter a schedule name','warning'); return; }
+  const r = await api.post('/schedules',{name,agentName,intentType,frequency,hour});
+  if(r.success) { toast('✅ Schedule created','success'); closeModal(); renderSchedules(); }
+  else toast('Failed to create schedule: '+(r.error||'Unknown'),'error');
+}
+window.submitCreateSchedule = submitCreateSchedule;
+
+// ── Run Due ───────────────────────────────────────────────────────
+async function runDue() {
+  toast('Processing scheduled tasks...','info');
+  const r = await api.post('/schedules/run-due',{});
+  if(r.success) {
+    const n = r.data?.ran||0;
+    toast(n>0?`✅ ${n} scheduled task${n>1?'s':''} ran — check Intent Queue`:'No tasks due right now','info');
+    await refreshStats();
+    if(S.page==='today') renderToday();
+    else if(S.page==='schedules') renderSchedules();
+  }
+}
+window.runDue = runDue;
+
+// ================================================================
+// BUSINESS HEALTH SCORE
+// ================================================================
+async function renderHealth() {
+  const [hRes, iRes] = await Promise.all([
+    api.get('/business/health-score'),
+    api.get('/business/insights')
+  ]);
+  S.health = hRes.data||{overall:72,inventory:68,pricing:74,marketing:65,products:80,operations:75,trend:'up',alerts:[]};
+  S.insights = iRes.data||[];
+
+  const areas = [
+    {key:'inventory',label:'Inventory',icon:'fa-boxes',color:'emerald',desc:'Stock levels, velocity, restock health'},
+    {key:'pricing',label:'Pricing Strategy',icon:'fa-tags',color:'amber',desc:'Competitive positioning, margin health'},
+    {key:'marketing',label:'Marketing',icon:'fa-envelope',color:'pink',desc:'Email open rates, campaign performance'},
+    {key:'products',label:'Products',icon:'fa-lightbulb',color:'blue',desc:'Catalog performance, ratings, AOV'},
+    {key:'operations',label:'Operations',icon:'fa-cogs',color:'violet',desc:'Workflow efficiency, process health'}
+  ];
+
+  function scoreColor(v) { return v>=80?'emerald':v>=60?'amber':'red'; }
+  function scoreBg(v) { return v>=80?'bg-emerald-500':v>=60?'bg-amber-500':'bg-red-500'; }
+
+  document.getElementById('content').innerHTML = `
+    <!-- Overall Score -->
+    <div class="bg-gradient-to-r from-[#1a0f3a] to-[#4c1d95] rounded-2xl p-6 mb-5 text-white">
+      <div class="flex items-center gap-6">
+        <div class="relative w-24 h-24 shrink-0">
+          <svg viewBox="0 0 36 36" class="w-full h-full health-ring">
+            <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="3"/>
+            <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="${S.health.overall>=80?'#10b981':S.health.overall>=60?'#f59e0b':'#ef4444'}" stroke-width="3" stroke-dasharray="${S.health.overall}, 100" stroke-linecap="round"/>
+          </svg>
+          <div class="absolute inset-0 flex flex-col items-center justify-center">
+            <span class="text-2xl font-bold">${S.health.overall}</span>
+            <span class="text-[10px] text-white/60">/100</span>
+          </div>
+        </div>
+        <div class="flex-1">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xl font-bold">Business Health Score</span>
+            <span class="flex items-center gap-1 text-sm ${S.health.trend==='up'?'text-emerald-300':'text-red-300'}">
+              <i class="fas ${S.health.trend==='up'?'fa-arrow-up':S.health.trend==='down'?'fa-arrow-down':'fa-minus'}"></i>
+              ${S.health.trend}
+            </span>
+          </div>
+          <p class="text-violet-200 text-sm">${S.health.overall>=80?'Excellent! Your business is in great shape.':S.health.overall>=60?'Good foundation with clear improvement opportunities.':'Needs attention — take action on the recommendations below.'}</p>
+          <div class="mt-3 text-xs text-violet-300">Last updated ${S.health.lastUpdated?ago(S.health.lastUpdated):'today'}</div>
+        </div>
+        <button onclick="generateHealthIntent()" class="shrink-0 bg-white/10 hover:bg-white/20 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-colors border border-white/10">
+          <i class="fas fa-heartbeat mr-2"></i>Generate Report
+        </button>
+      </div>
+    </div>
+
+    <!-- Area Scores -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+      ${areas.map(a=>{
+        const score = S.health[a.key]||65;
+        return `
+          <div class="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-9 h-9 rounded-xl bg-${a.color}-100 flex items-center justify-center shrink-0">
+                <i class="fas ${a.icon} text-${a.color}-600 text-sm"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-bold text-gray-700">${a.label}</div>
+                <div class="text-[10px] text-gray-400">${a.desc}</div>
+              </div>
+              <div class="text-xl font-bold text-${scoreColor(score)}-600">${score}</div>
+            </div>
+            <div class="w-full bg-gray-100 rounded-full h-2">
+              <div class="${scoreBg(score)} h-2 rounded-full transition-all" style="width:${score}%"></div>
+            </div>
+            <div class="mt-2 text-[10px] text-gray-400">${score>=80?'✅ Strong':score>=60?'⚠️ Needs work':'❌ Critical attention needed'}</div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+
+    <!-- Alerts -->
+    ${(S.health.alerts||[]).length>0 ? `
+      <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden mb-5">
+        <div class="px-5 py-4 border-b border-gray-50">
+          <div class="font-bold text-gray-800">Health Alerts</div>
+        </div>
+        <div class="divide-y divide-gray-50">
+          ${S.health.alerts.map(a=>`
+            <div class="flex items-start gap-3 p-4">
+              <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${a.severity==='critical'?'bg-red-100':a.severity==='warning'?'bg-amber-100':'bg-blue-100'}">
+                <i class="fas ${a.severity==='critical'?'fa-exclamation-circle text-red-600':a.severity==='warning'?'fa-exclamation-triangle text-amber-600':'fa-info-circle text-blue-600'} text-sm"></i>
+              </div>
+              <div>
+                <div class="text-xs font-bold ${a.severity==='critical'?'text-red-700':a.severity==='warning'?'text-amber-700':'text-blue-700'}">${esc(a.area)}</div>
+                <div class="text-sm text-gray-600">${esc(a.message)}</div>
+                <div class="text-[10px] text-gray-400 mt-0.5">${ago(a.createdAt)}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- Insights grid -->
+    <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-50">
+        <div class="font-bold text-gray-800">Business Insights</div>
+        <div class="text-xs text-gray-400">Key metrics from your business</div>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 divide-x divide-y divide-gray-50">
+        ${S.insights.map(ins=>`
+          <div class="p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="w-7 h-7 rounded-lg bg-${ins.color}-100 flex items-center justify-center">
+                <i class="fas ${ins.icon} text-${ins.color}-600 text-xs"></i>
+              </div>
+              <span class="text-xs font-semibold text-gray-600">${esc(ins.title)}</span>
+            </div>
+            <div class="text-2xl font-bold text-gray-800">${esc(ins.value)}</div>
+            <div class="flex items-center gap-1 mt-1">
+              <i class="fas ${ins.trend==='up'?'fa-arrow-up text-emerald-500':ins.trend==='down'?'fa-arrow-down text-red-500':'fa-minus text-gray-400'} text-[10px]"></i>
+              <span class="text-[10px] ${ins.trend==='up'?'text-emerald-600':ins.trend==='down'?'text-red-500':'text-gray-400'}">${ins.trendPercent?Math.abs(ins.trendPercent)+'% ':''} ${ins.trend}</span>
+            </div>
           </div>
         `).join('')}
       </div>
@@ -1006,469 +1600,268 @@ async function renderSchedulesPage() {
   `;
 }
 
-function scheduleCard(s) {
-  return `
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-      <div class="flex items-start justify-between mb-3">
-        <div class="w-10 h-10 rounded-xl ${getIntentBg(s.intentType)} flex items-center justify-center">
-          <i class="fas ${getIntentIcon(s.intentType)} ${getIntentIconColor(s.intentType)}"></i>
+async function generateHealthIntent() {
+  toast('Generating health report...','info');
+  const r = await api.post('/intents/generate',{agentName:'BusinessHealthAgent',intentType:'business_health'});
+  if(r.success) { S.intents.unshift(r.data); toast('✅ Health report generated','success'); openIntent(r.data.id); }
+  else toast('Failed','error');
+}
+window.generateHealthIntent = generateHealthIntent;
+
+// ================================================================
+// BUSINESS PROFILE
+// ================================================================
+async function renderProfile() {
+  const r = await api.get('/business/profile');
+  S.profile = r.data||{};
+  const p = S.profile;
+
+  document.getElementById('content').innerHTML = `
+    <div class="max-w-2xl mx-auto space-y-4">
+      <!-- Header -->
+      <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+        <div class="page-header p-5 text-white">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center">
+              <i class="fas fa-store text-violet-200 text-lg"></i>
+            </div>
+            <div>
+              <div class="font-bold text-lg">${esc(p.businessName||'My Business')}</div>
+              <div class="text-violet-200 text-sm">${esc(p.niche||'E-commerce')} · ${esc(p.platform||'multi')}</div>
+            </div>
+          </div>
         </div>
-        <div class="flex gap-2">
-          <button onclick="runScheduleNow('${s.id}')" title="Run now" class="w-7 h-7 rounded-lg bg-violet-100 text-violet-600 flex items-center justify-center hover:bg-violet-200 text-xs">
-            <i class="fas fa-play"></i>
+        <div class="p-5">
+          <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Business Information</div>
+          <div class="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Business Name</label>
+              <input id="p-businessName" type="text" value="${esc(p.businessName||'')}" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Owner Name</label>
+              <input id="p-ownerName" type="text" value="${esc(p.ownerName||'')}" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Niche</label>
+              <input id="p-niche" type="text" value="${esc(p.niche||'')}" placeholder="e.g. hair products, electronics" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Sub-niche</label>
+              <input id="p-subNiche" type="text" value="${esc(p.subNiche||'')}" placeholder="e.g. natural hair care" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Platform</label>
+              <select id="p-platform" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+                ${['shopify','amazon','etsy','woocommerce','multi','other'].map(v=>`<option value="${v}" ${p.platform===v?'selected':''}>${v.charAt(0).toUpperCase()+v.slice(1)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Team Size</label>
+              <select id="p-teamSize" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+                ${['solo','small','medium','large'].map(v=>`<option value="${v}" ${p.teamSize===v?'selected':''}>${v.charAt(0).toUpperCase()+v.slice(1)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 mt-4">Strategy & Preferences</div>
+          <div class="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Pricing Style</label>
+              <select id="p-pricingStyle" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+                ${['aggressive','moderate','premium'].map(v=>`<option value="${v}" ${p.pricingStyle===v?'selected':''}>${v.charAt(0).toUpperCase()+v.slice(1)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Risk Tolerance</label>
+              <select id="p-riskTolerance" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+                ${['conservative','balanced','aggressive'].map(v=>`<option value="${v}" ${p.riskTolerance===v?'selected':''}>${v.charAt(0).toUpperCase()+v.slice(1)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Monthly Revenue ($)</label>
+              <input id="p-monthlyRevenue" type="number" value="${p.monthlyRevenue||''}" placeholder="8500" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Monthly Budget ($)</label>
+              <input id="p-monthlyBudget" type="number" value="${p.monthlyBudget||''}" placeholder="5000" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Top Products (comma-separated)</label>
+            <input id="p-topProducts" type="text" value="${esc((p.topProducts||[]).join(', '))}" placeholder="Shea Moisture Curl Cream, Edge Control, Hair Oil" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+          </div>
+          <div class="mb-4">
+            <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Focus Categories (comma-separated)</label>
+            <input id="p-focusCategories" type="text" value="${esc((p.focusCategories||[]).join(', '))}" placeholder="hair care, beauty accessories, styling tools" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+          </div>
+
+          <div class="flex items-center justify-between p-3 bg-gray-50 rounded-xl mb-4">
+            <div>
+              <div class="text-sm font-semibold text-gray-700">Auto-reject high-risk intents</div>
+              <div class="text-xs text-gray-400">Automatically decline high-risk recommendations</div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="p-autoRejectHighRisk" class="sr-only peer" ${p.autoRejectHighRisk?'checked':''}>
+              <div class="w-10 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-5 peer-checked:bg-violet-600 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+            </label>
+          </div>
+
+          <button onclick="saveProfile()" class="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold px-5 py-3 rounded-xl transition-colors text-sm">
+            <i class="fas fa-save mr-2"></i>Save Profile — AI agents will use your updated settings
           </button>
-          <button onclick="toggleSchedule('${s.id}', ${!s.isActive})" title="Toggle" class="w-7 h-7 rounded-lg ${s.isActive ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'} flex items-center justify-center hover:opacity-80 text-xs">
-            <i class="fas ${s.isActive ? 'fa-pause' : 'fa-play'}"></i>
-          </button>
-          <button onclick="deleteSchedule('${s.id}')" title="Delete" class="w-7 h-7 rounded-lg bg-red-50 text-red-500 flex items-center justify-center hover:bg-red-100 text-xs">
-            <i class="fas fa-trash"></i>
-          </button>
         </div>
       </div>
-      <h3 class="font-semibold text-gray-800 text-sm mb-0.5">${s.name}</h3>
-      <p class="text-xs text-gray-500 mb-3">${s.description}</p>
-      <div class="flex flex-wrap gap-2 text-xs">
-        <span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-          <i class="fas fa-sync-alt mr-1"></i>${s.frequency}
-          ${s.dayOfWeek ? ` · ${s.dayOfWeek}` : ''}
-          ${s.hour !== undefined ? ` · ${s.hour}:00` : ''}
-        </span>
-        <span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-          <i class="fas fa-robot mr-1"></i>${s.aiModel}
-        </span>
-      </div>
-      <div class="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400">
-        <span><i class="fas fa-clock mr-1"></i>Next: ${formatDate(s.nextRun)}</span>
-        <span class="${s.isActive ? 'text-emerald-500' : 'text-gray-400'} font-medium">${s.isActive ? '● Active' : '○ Paused'}</span>
-      </div>
-    </div>
-  `;
-}
 
-async function runScheduleNow(id) {
-  toast('Running scheduled task...', 'info');
-  const r = await API.post(`/schedules/${id}/run`, {});
-  if (r.success) {
-    toast('✅ Intent generated from schedule!', 'success');
-    navigate('intents');
-  } else {
-    toast(r.error ?? 'Failed to run', 'error');
-  }
-}
-
-async function toggleSchedule(id, isActive) {
-  const r = await API.patch(`/schedules/${id}`, { isActive });
-  if (r.success) {
-    toast(`Schedule ${isActive ? 'activated' : 'paused'}`, 'info');
-    await renderSchedulesPage();
-  }
-}
-
-async function deleteSchedule(id) {
-  if (!confirm('Delete this schedule?')) return;
-  const r = await API.delete(`/schedules/${id}`);
-  if (r.success) {
-    toast('Schedule deleted', 'info');
-    await renderSchedulesPage();
-  }
-}
-
-function openNewScheduleModal() {
-  document.getElementById('schedule-modal-content').innerHTML = `
-    <div class="p-6">
-      <h3 class="font-bold text-gray-800 text-lg mb-4">Create New Schedule</h3>
-      <div class="space-y-3">
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Schedule Name *</label>
-          <input id="s-name" type="text" placeholder="e.g., Daily Morning Scan"
-            class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-        </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Intent Type *</label>
-          <select id="s-type" class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400">
-            ${[
-              ['market_analysis','Market Analysis'],['pricing_update','Pricing Review'],
-              ['competitor_scan','Competitor Scan'],['inventory_action','Inventory Check'],
-              ['email_draft','Email Draft'],['product_creation','Product Ideas'],
-              ['trend_report','Trend Report'],['performance_review','Performance Review'],
-              ['opportunity_alert','Opportunity Alert'],['bundle_suggestion','Bundle Strategy'],
-              ['restock_alert','Restock Alert'],['campaign_suggestion','Campaign Idea']
-            ].map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}
-          </select>
-        </div>
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="text-xs font-medium text-gray-600 mb-1 block">Frequency *</label>
-            <select id="s-freq" onchange="toggleDaySelect()" class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400">
-              <option value="daily">Daily</option>
-              <option value="weekly" selected>Weekly</option>
-              <option value="biweekly">Bi-weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
+      <!-- Approval Patterns -->
+      ${p.approvalPatterns?.length>0 ? `
+        <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-gray-50">
+            <div class="font-bold text-gray-800">Personalization Patterns</div>
+            <div class="text-xs text-gray-400">How AI agents have learned from your decisions</div>
           </div>
-          <div id="day-select-wrap">
-            <label class="text-xs font-medium text-gray-600 mb-1 block">Day of Week</label>
-            <select id="s-day" class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400">
-              ${['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].map(d => `<option value="${d}">${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
-            </select>
+          <div class="divide-y divide-gray-50">
+            ${p.approvalPatterns.map(ap=>`
+              <div class="flex items-center gap-3 p-4">
+                <div class="w-8 h-8 rounded-lg ${iBg(ap.intentType)} flex items-center justify-center shrink-0">
+                  <i class="fas ${iIcon(ap.intentType)} ${iColor(ap.intentType)} text-xs"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-semibold text-gray-700">${fmtType(ap.intentType)}</div>
+                  <div class="text-[10px] text-gray-400">Last: ${ap.lastDecision}</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-sm font-bold text-${ap.approvalRate>=60?'emerald':'amber'}-600">${ap.approvalRate}%</div>
+                  <div class="text-[10px] text-gray-400">approval rate</div>
+                </div>
+                <div class="w-20 bg-gray-100 rounded-full h-1.5 shrink-0">
+                  <div class="h-1.5 rounded-full bg-violet-500" style="width:${ap.approvalRate}%"></div>
+                </div>
+              </div>
+            `).join('')}
           </div>
         </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Hour (0-23)</label>
-          <input id="s-hour" type="number" min="0" max="23" value="9"
-            class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-        </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">AI Model</label>
-          <select id="s-model" class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400">
-            <option value="claude">Claude (Anthropic)</option>
-            <option value="openai">GPT (OpenAI)</option>
-            <option value="hybrid">Hybrid (Best of both)</option>
-          </select>
-        </div>
-      </div>
-      <div class="flex gap-3 mt-5">
-        <button onclick="saveNewSchedule()" class="btn flex-1 bg-violet-600 text-white py-2.5 rounded-xl font-semibold hover:bg-violet-700">
-          <i class="fas fa-calendar-plus mr-2"></i>Create Schedule
-        </button>
-        <button onclick="closeScheduleModal()" class="btn bg-gray-100 text-gray-600 px-4 py-2.5 rounded-xl hover:bg-gray-200">Cancel</button>
-      </div>
-    </div>
-  `;
-  document.getElementById('schedule-modal').classList.remove('hidden');
-}
-
-function toggleDaySelect() {
-  const freq = document.getElementById('s-freq')?.value;
-  const wrap = document.getElementById('day-select-wrap');
-  if (wrap) wrap.style.display = (freq === 'daily' || freq === 'monthly') ? 'none' : 'block';
-}
-
-async function saveNewSchedule() {
-  const name = document.getElementById('s-name')?.value.trim();
-  const intentType = document.getElementById('s-type')?.value;
-  const frequency = document.getElementById('s-freq')?.value;
-  const dayOfWeek = document.getElementById('s-day')?.value;
-  const hour = parseInt(document.getElementById('s-hour')?.value ?? '9');
-  const aiModel = document.getElementById('s-model')?.value;
-
-  if (!name) { toast('Please enter a schedule name', 'warning'); return; }
-
-  const r = await API.post('/schedules', { name, intentType, frequency, dayOfWeek, hour, aiModel });
-  if (r.success) {
-    toast('✅ Schedule created!', 'success');
-    closeScheduleModal();
-    await renderSchedulesPage();
-  } else {
-    toast(r.error ?? 'Failed to create', 'error');
-  }
-}
-
-function closeScheduleModal() {
-  document.getElementById('schedule-modal').classList.add('hidden');
-}
-
-// ============================================================
-// PROFILE PAGE
-// ============================================================
-
-async function renderProfilePage() {
-  const r = await API.get('/profile');
-  const p = r.data ?? {};
-
-  document.getElementById('app-content').innerHTML = `
-    <div class="max-w-2xl">
-      <div class="bg-violet-50 border border-violet-200 rounded-2xl p-4 mb-6">
-        <div class="flex gap-2">
-          <i class="fas fa-info-circle text-violet-500 mt-0.5"></i>
-          <div class="text-sm text-violet-700">
-            <strong>Personalization Active.</strong> The AI uses your profile to generate more relevant, niche-specific intents. The more accurate your profile, the better your recommendations.
-          </div>
-        </div>
-      </div>
-
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-5">
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Business Name</label>
-          <input id="p-name" type="text" value="${p.businessName ?? ''}"
-            class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-        </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Business Niche</label>
-          <input id="p-niche" type="text" value="${p.niche ?? ''}" placeholder="e.g., hair products, electronics, clothing"
-            class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-          <p class="text-xs text-gray-400 mt-1">Be specific — "natural hair care products" beats "beauty"</p>
-        </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Pricing Style</label>
-          <select id="p-pricing" class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400">
-            ${['aggressive','moderate','premium'].map(s =>
-              `<option value="${s}" ${p.pricingStyle === s ? 'selected' : ''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`
-            ).join('')}
-          </select>
-        </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Focus Categories (comma-separated)</label>
-          <input id="p-categories" type="text" value="${(p.focusCategories ?? []).join(', ')}" placeholder="e.g., hair care, accessories, tools"
-            class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-        </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Monthly Budget (USD)</label>
-          <input id="p-budget" type="number" value="${p.monthlyBudget ?? ''}" placeholder="e.g., 5000"
-            class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
-        </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600 mb-1 block">Preferred AI Model</label>
-          <select id="p-ai" class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400">
-            ${['claude','openai','hybrid'].map(m =>
-              `<option value="${m}" ${p.preferredAI === m ? 'selected' : ''}>${m.charAt(0).toUpperCase()+m.slice(1)}</option>`
-            ).join('')}
-          </select>
-        </div>
-        <div class="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-          <div>
-            <div class="text-sm font-medium text-gray-700">Auto-reject high risk intents</div>
-            <div class="text-xs text-gray-500">Automatically reject intents marked as high risk</div>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" id="p-autoreject" ${p.autoRejectHighRisk ? 'checked' : ''} class="sr-only peer" />
-            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-violet-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-          </label>
-        </div>
-
-        <button onclick="saveProfile()" class="btn w-full bg-violet-600 text-white py-3 rounded-xl font-semibold hover:bg-violet-700">
-          <i class="fas fa-save mr-2"></i>Save Profile
-        </button>
-      </div>
+      ` : ''}
     </div>
   `;
 }
 
 async function saveProfile() {
-  const categories = document.getElementById('p-categories')?.value.split(',').map(s => s.trim()).filter(Boolean) ?? [];
-  const updates = {
-    businessName: document.getElementById('p-name')?.value.trim(),
-    niche: document.getElementById('p-niche')?.value.trim(),
-    pricingStyle: document.getElementById('p-pricing')?.value,
-    focusCategories: categories,
-    monthlyBudget: parseInt(document.getElementById('p-budget')?.value ?? '0') || undefined,
-    preferredAI: document.getElementById('p-ai')?.value,
-    autoRejectHighRisk: document.getElementById('p-autoreject')?.checked ?? false
+  const getValue = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const getChecked = id => { const el = document.getElementById(id); return el ? el.checked : false; };
+  const splitCSV = v => v.split(',').map(s=>s.trim()).filter(Boolean);
+
+  const data = {
+    businessName: getValue('p-businessName'),
+    ownerName: getValue('p-ownerName'),
+    niche: getValue('p-niche'),
+    subNiche: getValue('p-subNiche'),
+    platform: getValue('p-platform'),
+    teamSize: getValue('p-teamSize'),
+    pricingStyle: getValue('p-pricingStyle'),
+    riskTolerance: getValue('p-riskTolerance'),
+    monthlyRevenue: parseFloat(getValue('p-monthlyRevenue'))||undefined,
+    monthlyBudget: parseFloat(getValue('p-monthlyBudget'))||undefined,
+    topProducts: splitCSV(getValue('p-topProducts')),
+    focusCategories: splitCSV(getValue('p-focusCategories')),
+    autoRejectHighRisk: getChecked('p-autoRejectHighRisk')
   };
-  const r = await API.patch('/profile', updates);
-  if (r.success) toast('✅ Profile saved! AI will use your new settings.', 'success');
-  else toast(r.error ?? 'Failed to save', 'error');
+
+  const r = await api.patch('/business/profile', data);
+  if(r.success) { S.profile = r.data; toast('✅ Profile saved — AI agents updated','success'); }
+  else toast('Save failed','error');
 }
+window.saveProfile = saveProfile;
 
-// ============================================================
-// AI ROUTING PAGE
-// ============================================================
+// ================================================================
+// AGENT LOGS
+// ================================================================
+async function renderLogs() {
+  const r = await api.get('/business/logs');
+  S.logs = r.data||[];
 
-function renderRoutingPage() {
-  const routingTable = [
-    { type: 'market_analysis', model: 'Claude', fallback: 'OpenAI', reason: 'Contextual trend reasoning & narrative analysis', category: 'Research' },
-    { type: 'pricing_update', model: 'Hybrid', fallback: 'Claude', reason: 'OpenAI structures data; Claude reasons about risk', category: 'Strategy' },
-    { type: 'product_creation', model: 'Claude', fallback: 'OpenAI', reason: 'Creative descriptions & bundle strategies', category: 'Products' },
-    { type: 'email_draft', model: 'Claude', fallback: 'OpenAI', reason: 'Natural, persuasive copy with brand voice', category: 'Marketing' },
-    { type: 'inventory_action', model: 'OpenAI', fallback: 'Claude', reason: 'Structured inventory pattern analysis', category: 'Operations' },
-    { type: 'competitor_scan', model: 'OpenAI', fallback: 'Claude', reason: 'Fast structured price & market comparisons', category: 'Intelligence' },
-    { type: 'trend_report', model: 'Claude', fallback: 'OpenAI', reason: 'Macro & micro trend reasoning', category: 'Research' },
-    { type: 'bundle_suggestion', model: 'Hybrid', fallback: 'Claude', reason: 'OpenAI scans affinities; Claude creates strategy', category: 'Products' },
-    { type: 'restock_alert', model: 'OpenAI', fallback: 'Claude', reason: 'Numeric threshold analysis & structured output', category: 'Operations' },
-    { type: 'campaign_suggestion', model: 'Hybrid', fallback: 'Claude', reason: 'Audience segmentation + campaign narratives', category: 'Marketing' },
-    { type: 'performance_review', model: 'Claude', fallback: 'OpenAI', reason: 'Multi-dimensional performance synthesis', category: 'Strategy' },
-    { type: 'opportunity_alert', model: 'Claude', fallback: 'OpenAI', reason: 'Identifies non-obvious market opportunities', category: 'Strategy' }
-  ];
-
-  const modelColors = { 'Claude': 'bg-violet-100 text-violet-700', 'OpenAI': 'bg-emerald-100 text-emerald-700', 'Hybrid': 'bg-amber-100 text-amber-700' };
-
-  document.getElementById('app-content').innerHTML = `
-    <div class="mb-6">
-      <div class="grid grid-cols-3 gap-4 mb-6">
-        ${[
-          { model: 'Claude (Anthropic)', icon: 'fa-brain', color: 'violet', desc: 'Long-form reasoning, analysis, creative writing, nuanced recommendations', used: '8 intent types' },
-          { model: 'OpenAI GPT-4o', icon: 'fa-bolt', color: 'emerald', desc: 'Structured JSON outputs, pattern matching, numeric analysis, fast scanning', used: '3 intent types' },
-          { model: 'Hybrid Mode', icon: 'fa-sync', color: 'amber', desc: 'Both models consulted. Claude synthesizes the final intent recommendation.', used: '3 intent types' }
-        ].map(m => `
-          <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <div class="w-10 h-10 rounded-xl bg-${m.color}-100 flex items-center justify-center mb-3">
-              <i class="fas ${m.icon} text-${m.color}-600"></i>
+  document.getElementById('content').innerHTML = `
+    <div class="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+        <div>
+          <div class="font-bold text-gray-800">Agent Activity Log</div>
+          <div class="text-xs text-gray-400">${S.logs.length} recent activities</div>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <div class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></div>
+          <span class="text-xs text-emerald-600 font-medium">Live</span>
+        </div>
+      </div>
+      ${S.logs.length===0 ? `
+        <div class="p-12 text-center">
+          <i class="fas fa-terminal text-4xl text-gray-200 mb-3 block"></i>
+          <div class="text-gray-400 text-sm">No agent activity yet. Generate your first intent to see logs here.</div>
+        </div>
+      ` : `
+        <div class="divide-y divide-gray-50">
+          ${S.logs.map(log=>`
+            <div class="flex items-start gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+              <div class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 bg-${AGENT_COLORS[log.agentName]||'gray'}-100">
+                <i class="fas ${AGENT_ICONS[log.agentName]||'fa-robot'} text-${AGENT_COLORS[log.agentName]||'gray'}-600 text-[10px]"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-xs font-semibold text-gray-700">${esc(log.agentName?.replace('Agent',' Agent'))}</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded font-mono ${log.status==='success'?'bg-emerald-100 text-emerald-600':log.status==='error'?'bg-red-100 text-red-600':'bg-gray-100 text-gray-500'}">${log.action}</span>
+                  <span class="ml-auto text-[10px] text-gray-400">${ago(log.timestamp)}</span>
+                </div>
+                <div class="text-xs text-gray-500 mt-0.5">${esc(log.message)}</div>
+                ${log.intentId ? `<button onclick="openIntent('${log.intentId}')" class="text-[10px] text-violet-500 hover:text-violet-700 mt-0.5 font-medium">View Intent →</button>` : ''}
+              </div>
+              <div class="w-1.5 h-1.5 rounded-full mt-2 shrink-0 ${log.status==='success'?'bg-emerald-400':log.status==='error'?'bg-red-400':'bg-gray-300'}"></div>
             </div>
-            <div class="font-semibold text-gray-800 text-sm">${m.model}</div>
-            <div class="text-xs text-gray-500 mt-1">${m.desc}</div>
-            <div class="text-xs text-${m.color}-600 font-medium mt-2">${m.used}</div>
-          </div>
-        `).join('')}
-      </div>
-
-      <!-- Routing Table -->
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-100">
-          <h3 class="font-semibold text-gray-800">Intent → AI Model Routing Table</h3>
-          <p class="text-xs text-gray-500 mt-0.5">Each intent type is routed to the most suitable AI model based on task requirements</p>
+          `).join('')}
         </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-              <tr>
-                <th class="px-5 py-3 text-left">Intent Type</th>
-                <th class="px-5 py-3 text-left">Primary Model</th>
-                <th class="px-5 py-3 text-left">Fallback</th>
-                <th class="px-5 py-3 text-left">Category</th>
-                <th class="px-5 py-3 text-left">Reasoning</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${routingTable.map((r, idx) => `
-                <tr class="${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} border-t border-gray-100">
-                  <td class="px-5 py-3">
-                    <div class="flex items-center gap-2">
-                      <i class="fas ${getIntentIcon(r.type)} text-gray-400 w-4 text-center"></i>
-                      <span class="font-medium text-gray-700">${formatIntentType(r.type)}</span>
-                    </div>
-                  </td>
-                  <td class="px-5 py-3"><span class="text-xs font-semibold px-2 py-1 rounded-full ${modelColors[r.model]}">${r.model}</span></td>
-                  <td class="px-5 py-3"><span class="text-xs text-gray-500">${r.fallback}</span></td>
-                  <td class="px-5 py-3"><span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">${r.category}</span></td>
-                  <td class="px-5 py-3 text-xs text-gray-500 max-w-xs">${r.reason}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Architecture Note -->
-      <div class="mt-4 bg-gray-800 text-gray-200 rounded-2xl p-5 text-xs leading-relaxed">
-        <div class="text-green-400 font-mono mb-2">// SYSTEM ARCHITECTURE — INTENT LAYER</div>
-        <div class="font-mono text-gray-300">
-          User Request → <span class="text-violet-300">AI Router</span> → <span class="text-yellow-300">AI Model (Claude/OpenAI)</span> → <span class="text-emerald-300">Intent Generator</span> → <span class="text-blue-300">Intent Store</span> → <span class="text-orange-300">User Review</span><br/>
-          <br/>
-          <span class="text-red-400">ACTION LAYER: ████████ UNTOUCHED ████████</span><br/>
-          No pricing changes | No emails sent | No purchases made | No auto-execution<br/>
-          <br/>
-          <span class="text-green-400">HUMAN VERIFICATION LAYER: ALWAYS ACTIVE</span><br/>
-          requiresApproval: <span class="text-blue-300">true</span> <span class="text-gray-500">// immutable — cannot be overridden</span>
-        </div>
-      </div>
+      `}
     </div>
   `;
 }
 
-// ============================================================
-// UTILITY FUNCTIONS
-// ============================================================
+// ================================================================
+// INITIALIZATION
+// ================================================================
+async function init() {
+  // Check AI status
+  try {
+    const r = await api.get('/health');
+    if(r.status==='ok') {
+      const pill = document.getElementById('ai-pill');
+      if(pill) pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block pulse-dot"></span><span class="text-emerald-600 font-medium text-xs">AI Active · Safe Mode</span>`;
+    }
+  } catch(_) {}
 
-function formatIntentType(type) {
-  if (!type) return '';
-  return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  // Seed initial intents if empty
+  await ensureIntents();
+
+  // Render default page
+  await nav('today');
+
+  // Poll every 60s for new scheduled intents
+  setInterval(async () => {
+    await refreshStats();
+  }, 60000);
 }
 
-function timeAgo(isoString) {
-  const diff = Date.now() - new Date(isoString).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function formatDate(isoString) {
-  if (!isoString) return 'N/A';
-  const d = new Date(isoString);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-function getIntentIcon(type) {
-  const icons = {
-    market_analysis: 'fa-chart-line', pricing_update: 'fa-tags', product_creation: 'fa-lightbulb',
-    email_draft: 'fa-envelope', inventory_action: 'fa-boxes', competitor_scan: 'fa-search',
-    trend_report: 'fa-fire', bundle_suggestion: 'fa-gift', restock_alert: 'fa-exclamation-triangle',
-    campaign_suggestion: 'fa-bullhorn', performance_review: 'fa-tachometer-alt', opportunity_alert: 'fa-gem'
-  };
-  return icons[type] ?? 'fa-brain';
-}
-
-function getIntentBg(type) {
-  const bgs = {
-    market_analysis: 'bg-violet-100', pricing_update: 'bg-amber-100', product_creation: 'bg-yellow-100',
-    email_draft: 'bg-pink-100', inventory_action: 'bg-emerald-100', competitor_scan: 'bg-blue-100',
-    trend_report: 'bg-red-100', bundle_suggestion: 'bg-teal-100', restock_alert: 'bg-orange-100',
-    campaign_suggestion: 'bg-rose-100', performance_review: 'bg-indigo-100', opportunity_alert: 'bg-purple-100'
-  };
-  return bgs[type] ?? 'bg-gray-100';
-}
-
-function getIntentIconColor(type) {
-  const colors = {
-    market_analysis: 'text-violet-600', pricing_update: 'text-amber-600', product_creation: 'text-yellow-600',
-    email_draft: 'text-pink-600', inventory_action: 'text-emerald-600', competitor_scan: 'text-blue-600',
-    trend_report: 'text-red-600', bundle_suggestion: 'text-teal-600', restock_alert: 'text-orange-600',
-    campaign_suggestion: 'text-rose-600', performance_review: 'text-indigo-600', opportunity_alert: 'text-purple-600'
-  };
-  return colors[type] ?? 'text-gray-600';
-}
-
-function getIntentGradient(type) {
-  const grads = {
-    market_analysis: 'from-violet-600 to-purple-700', pricing_update: 'from-amber-500 to-orange-600',
-    product_creation: 'from-yellow-500 to-amber-600', email_draft: 'from-pink-500 to-rose-600',
-    inventory_action: 'from-emerald-500 to-teal-600', competitor_scan: 'from-blue-500 to-indigo-600',
-    trend_report: 'from-red-500 to-rose-600', bundle_suggestion: 'from-teal-500 to-cyan-600',
-    restock_alert: 'from-orange-500 to-red-600', campaign_suggestion: 'from-rose-500 to-pink-600',
-    performance_review: 'from-indigo-500 to-violet-600', opportunity_alert: 'from-purple-500 to-violet-600'
-  };
-  return grads[type] ?? 'from-gray-600 to-gray-700';
-}
-
-function getStatusBadgeClass(status) {
-  return {
-    approved: 'bg-emerald-100 text-emerald-700',
-    rejected: 'bg-gray-100 text-gray-500',
-    modified: 'bg-blue-100 text-blue-700',
-    pending: 'bg-violet-100 text-violet-700'
-  }[status] ?? 'bg-gray-100 text-gray-600';
-}
-
-// ── Run Due Tasks ─────────────────────────────────────────────
-async function runDueTasks() {
-  const r = await API.post('/schedules/run-due', {});
-  if (r.data?.ran > 0) {
-    toast(`✅ ${r.data.ran} scheduled tasks processed`, 'success');
-    if (State.currentPage === 'dashboard') await renderDashboard();
-  } else {
-    toast('No tasks due right now', 'info');
+async function ensureIntents() {
+  const r = await api.get('/intents?limit=1');
+  if(r.success && (r.data||[]).length===0) {
+    // Auto-generate a few seed intents
+    const seeds = [
+      {agentName:'BusinessHealthAgent',intentType:'business_health'},
+      {agentName:'InventoryAgent',intentType:'inventory_restock'},
+      {agentName:'MarketResearchAgent',intentType:'market_trend'}
+    ];
+    for(const s of seeds) {
+      try { await api.post('/intents/generate',s); } catch(_){}
+    }
   }
 }
 
-// ── Close modals on backdrop click ───────────────────────────
-document.getElementById('intent-modal').addEventListener('click', function(e) {
-  if (e.target === this) closeIntentModal();
-});
-document.getElementById('schedule-modal').addEventListener('click', function(e) {
-  if (e.target === this) closeScheduleModal();
-});
-
-// ── Keyboard shortcuts ────────────────────────────────────────
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeIntentModal(); closeScheduleModal(); }
-});
-
-// ── Polling (check for due schedules every 5 min) ────────────
-function startPolling() {
-  State.pollingInterval = setInterval(() => {
-    runDueTasks();
-    refreshStats();
-  }, 5 * 60 * 1000);
-}
-
-// ============================================================
-// APP INIT
-// ============================================================
-(async function init() {
-  await checkAIStatus();
-  await navigate('dashboard');
-  startPolling();
-})();
+// Start
+init();

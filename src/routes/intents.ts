@@ -1,181 +1,131 @@
-// ============================================================
-// INTENT API ROUTES
-// ============================================================
-// All routes in this file operate on the INTENT LAYER only.
-// NO action is taken automatically. All outputs are intents
-// that require explicit user approval.
-// ============================================================
-
+// ================================================================
+// INTENT ROUTES — /api/intents
+// All outputs are INTENTS. All actions require human approval.
+// ================================================================
 import { Hono } from 'hono'
-import type { Intent, IntentType, IntentUpdateRequest } from '../types/intent'
-import { generateIntent, type Env } from '../lib/aiService'
+import type { Env } from '../lib/agents'
+import type { IntentType, AgentName, ApproveIntentRequest } from '../types/core'
+import { runAgent } from '../lib/agents'
 import {
-  saveIntent,
-  getIntent,
-  updateIntent,
-  getAllIntents,
-  getIntentsByStatus,
-  deleteIntent,
-  getUserProfile,
-  getDashboardStats
+  IntentStore, ApprovalStore, ProfileStore, HealthStore,
+  AgentStore, AgentLogStore, getDashboardStats, genId
 } from '../lib/store'
 
-const intents = new Hono<{ Bindings: Env }>()
+const router = new Hono<{ Bindings: Env }>()
 
-// ── GET /api/intents ─────────────────────────────────────────
-// Returns all intents, sorted by recency
-// ─────────────────────────────────────────────────────────────
-intents.get('/', (c) => {
-  const status = c.req.query('status')
-  const type = c.req.query('type')
-  const limit = parseInt(c.req.query('limit') ?? '50')
-
-  let results = getAllIntents()
-
-  if (status) results = results.filter(i => i.status === status)
-  if (type) results = results.filter(i => i.type === type)
-  results = results.slice(0, limit)
-
-  return c.json({
-    success: true,
-    data: results,
-    count: results.length,
-    timestamp: new Date().toISOString()
-  })
+// GET /api/intents
+router.get('/', (c) => {
+  const { status, type, agent, priority, limit = '50' } = c.req.query()
+  let results = IntentStore.all()
+  if (status)   results = results.filter(i => i.status === status)
+  if (type)     results = results.filter(i => i.type === type)
+  if (agent)    results = results.filter(i => i.generatedBy === agent)
+  if (priority) results = results.filter(i => i.priority === priority)
+  results = results.slice(0, parseInt(limit))
+  return c.json({ success: true, data: results, count: results.length, timestamp: new Date().toISOString() })
 })
 
-// ── GET /api/intents/stats ───────────────────────────────────
-// Dashboard statistics
-// ─────────────────────────────────────────────────────────────
-intents.get('/stats', (c) => {
-  return c.json({
-    success: true,
-    data: getDashboardStats(),
-    timestamp: new Date().toISOString()
-  })
+// GET /api/intents/stats
+router.get('/stats', (c) => {
+  return c.json({ success: true, data: getDashboardStats(), timestamp: new Date().toISOString() })
 })
 
-// ── GET /api/intents/pending ─────────────────────────────────
-// Returns all pending intents awaiting user decision
-// ─────────────────────────────────────────────────────────────
-intents.get('/pending', (c) => {
-  const pending = getIntentsByStatus('pending')
-  return c.json({
-    success: true,
-    data: pending,
-    count: pending.length,
-    timestamp: new Date().toISOString()
-  })
-})
-
-// ── GET /api/intents/:id ─────────────────────────────────────
-// Returns a single intent by ID
-// ─────────────────────────────────────────────────────────────
-intents.get('/:id', (c) => {
-  const id = c.req.param('id')
-  const intent = getIntent(id)
-
-  if (!intent) {
-    return c.json({ success: false, error: 'Intent not found' }, 404)
-  }
-
+// GET /api/intents/:id
+router.get('/:id', (c) => {
+  const intent = IntentStore.get(c.req.param('id'))
+  if (!intent) return c.json({ success: false, error: 'Intent not found' }, 404)
   return c.json({ success: true, data: intent, timestamp: new Date().toISOString() })
 })
 
-// ── POST /api/intents/generate ───────────────────────────────
-// Generates a new intent using AI
-// This ONLY generates an intent — it does NOT execute any action
-// ─────────────────────────────────────────────────────────────
-intents.post('/generate', async (c) => {
+// POST /api/intents/generate — Core intent generation endpoint
+router.post('/generate', async (c) => {
   try {
     const body = await c.req.json() as {
+      agentName?: AgentName
       intentType: IntentType
       context?: Record<string, unknown>
-      scheduledTaskId?: string
+      scheduleId?: string
+      workflowId?: string
     }
+    if (!body.intentType) return c.json({ success: false, error: 'intentType required' }, 400)
 
-    if (!body.intentType) {
-      return c.json({ success: false, error: 'intentType is required' }, 400)
-    }
+    // Determine which agent handles this intent type
+    const agentName = body.agentName ?? resolveAgent(body.intentType)
+    const intent = await runAgent(agentName, body.intentType, body.context ?? {}, c.env, body.scheduleId, body.workflowId)
 
-    const userProfile = getUserProfile()
-    const intent = await generateIntent(
-      body.intentType,
-      body.context ?? {},
-      userProfile,
-      c.env,
-      body.scheduledTaskId
-    )
-
-    saveIntent(intent)
+    IntentStore.save(intent)
+    AgentStore.incrementIntents(agentName)
+    AgentLogStore.push({
+      id: genId('log'), agentName, action: 'generate_intent',
+      intentId: intent.id, status: 'success',
+      message: `Generated ${intent.type} intent: "${intent.summary.substring(0, 60)}..."`,
+      timestamp: new Date().toISOString()
+    })
+    HealthStore.recalculate()
 
     return c.json({
-      success: true,
-      data: intent,
-      message: '✅ Intent generated successfully. Review and approve before any action is taken.',
+      success: true, data: intent,
+      message: '✅ Intent generated. Review and approve before any action is taken.',
       timestamp: new Date().toISOString()
     })
   } catch (err) {
-    return c.json({
-      success: false,
-      error: err instanceof Error ? err.message : 'Failed to generate intent'
-    }, 500)
+    return c.json({ success: false, error: err instanceof Error ? err.message : 'Generation failed' }, 500)
   }
 })
 
-// ── PATCH /api/intents/:id ───────────────────────────────────
-// Updates intent status (approve/reject/modify)
-// This is the HUMAN VERIFICATION LAYER
-// ─────────────────────────────────────────────────────────────
-intents.patch('/:id', async (c) => {
+// PATCH /api/intents/:id — Human Verification Layer (Approve/Reject/Modify)
+router.patch('/:id', async (c) => {
   const id = c.req.param('id')
-  const body = await c.req.json() as IntentUpdateRequest
+  const body = await c.req.json() as ApproveIntentRequest
+  const intent = IntentStore.get(id)
+  if (!intent) return c.json({ success: false, error: 'Intent not found' }, 404)
+  if (!['approved','rejected','modified'].includes(body.decision))
+    return c.json({ success: false, error: 'decision must be: approved, rejected, or modified' }, 400)
 
-  const existing = getIntent(id)
-  if (!existing) {
-    return c.json({ success: false, error: 'Intent not found' }, 404)
-  }
-
-  if (!['approved', 'rejected', 'modified'].includes(body.status)) {
-    return c.json({ success: false, error: 'Invalid status. Must be: approved, rejected, or modified' }, 400)
-  }
-
-  const updated = updateIntent(id, {
-    status: body.status,
-    modificationNote: body.modificationNote,
-    reviewedAt: new Date().toISOString()
+  const updated = IntentStore.update(id, {
+    status: body.decision, modificationNote: body.note, reviewedAt: new Date().toISOString()
   })
+
+  // Record approval for personalization
+  ProfileStore.recordApproval(intent.type, body.decision as 'approved' | 'rejected' | 'modified')
+
+  // Save approval record
+  const approval = { id: genId('approval'), intentId: id, decision: body.decision, note: body.note, decidedAt: new Date().toISOString() }
+  ApprovalStore.save(approval)
+  HealthStore.recalculate()
 
   const messages: Record<string, string> = {
-    approved: '✅ Intent approved. You may now execute the suggested actions manually.',
-    rejected: '❌ Intent rejected and archived.',
-    modified: '✏️ Intent marked as modified. Please review your changes.'
+    approved: '✅ Intent approved. Execute the suggested steps manually when ready.',
+    rejected:  '❌ Intent rejected and archived.',
+    modified:  '✏️ Intent modified. Your note has been saved.'
   }
-
-  return c.json({
-    success: true,
-    data: updated,
-    message: messages[body.status],
-    timestamp: new Date().toISOString()
-  })
+  return c.json({ success: true, data: updated, message: messages[body.decision], timestamp: new Date().toISOString() })
 })
 
-// ── DELETE /api/intents/:id ──────────────────────────────────
-// Removes an intent from the store
-// ─────────────────────────────────────────────────────────────
-intents.delete('/:id', (c) => {
-  const id = c.req.param('id')
-  const deleted = deleteIntent(id)
-
-  if (!deleted) {
-    return c.json({ success: false, error: 'Intent not found' }, 404)
-  }
-
-  return c.json({
-    success: true,
-    message: 'Intent deleted',
-    timestamp: new Date().toISOString()
-  })
+// DELETE /api/intents/:id
+router.delete('/:id', (c) => {
+  const deleted = IntentStore.delete(c.req.param('id'))
+  if (!deleted) return c.json({ success: false, error: 'Intent not found' }, 404)
+  return c.json({ success: true, message: 'Intent deleted', timestamp: new Date().toISOString() })
 })
 
-export default intents
+// ── Agent resolver ────────────────────────────────────────────────
+function resolveAgent(intentType: IntentType): AgentName {
+  const map: Record<string, AgentName> = {
+    inventory_restock: 'InventoryAgent', inventory_liquidate: 'InventoryAgent',
+    pricing_adjust: 'PricingAgent', pricing_bundle: 'PricingAgent', pricing_discount: 'PricingAgent',
+    market_trend: 'MarketResearchAgent', market_opportunity: 'MarketResearchAgent',
+    competitor_alert: 'MarketResearchAgent', seasonality_alert: 'MarketResearchAgent',
+    email_campaign: 'EmailMarketingAgent', email_abandoned_cart: 'EmailMarketingAgent',
+    email_reengagement: 'EmailMarketingAgent', customer_segment: 'EmailMarketingAgent',
+    product_create: 'ProductCreationAgent', product_bundle: 'ProductCreationAgent',
+    product_variation: 'ProductCreationAgent',
+    business_health: 'BusinessHealthAgent', performance_alert: 'BusinessHealthAgent',
+    financial_insight: 'BusinessHealthAgent',
+    strategy_review: 'StrategyAgent', workflow_suggestion: 'StrategyAgent',
+    ad_optimization: 'StrategyAgent'
+  }
+  return map[intentType] ?? 'BusinessHealthAgent'
+}
+
+export default router

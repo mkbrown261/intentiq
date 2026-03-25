@@ -1,247 +1,113 @@
-// ============================================================
-// SCHEDULE API ROUTES
-// ============================================================
-// Manages recurring AI tasks that generate intents on schedule.
-// Schedules NEVER auto-execute actions — they only trigger
-// intent generation for user review.
-// ============================================================
-
+// ================================================================
+// SCHEDULE ROUTES — /api/schedules
+// ================================================================
 import { Hono } from 'hono'
-import type { ScheduledTask, IntentType, DayOfWeek, ScheduleFrequency } from '../types/intent'
-import { generateIntent, type Env } from '../lib/aiService'
-import {
-  saveSchedule,
-  getSchedule,
-  getAllSchedules,
-  updateSchedule,
-  deleteSchedule,
-  saveIntent,
-  getUserProfile
-} from '../lib/store'
+import type { Env } from '../lib/agents'
+import type { Schedule, AgentName, IntentType } from '../types/core'
+import { runAgent } from '../lib/agents'
+import { ScheduleStore, IntentStore, AgentStore, AgentLogStore, genId, computeNextRun } from '../lib/store'
 
-const schedules = new Hono<{ Bindings: Env }>()
+const router = new Hono<{ Bindings: Env }>()
 
-// ── GET /api/schedules ───────────────────────────────────────
-schedules.get('/', (c) => {
-  return c.json({
-    success: true,
-    data: getAllSchedules(),
-    timestamp: new Date().toISOString()
-  })
+router.get('/', (c) => {
+  return c.json({ success: true, data: ScheduleStore.all(), timestamp: new Date().toISOString() })
 })
 
-// ── GET /api/schedules/:id ───────────────────────────────────
-schedules.get('/:id', (c) => {
-  const id = c.req.param('id')
-  const task = getSchedule(id)
-
-  if (!task) {
-    return c.json({ success: false, error: 'Schedule not found' }, 404)
-  }
-
-  return c.json({ success: true, data: task, timestamp: new Date().toISOString() })
+router.get('/:id', (c) => {
+  const s = ScheduleStore.get(c.req.param('id'))
+  if (!s) return c.json({ success: false, error: 'Schedule not found' }, 404)
+  return c.json({ success: true, data: s, timestamp: new Date().toISOString() })
 })
 
-// ── POST /api/schedules ──────────────────────────────────────
-// Creates a new scheduled task
-// ─────────────────────────────────────────────────────────────
-schedules.post('/', async (c) => {
-  const body = await c.req.json() as Partial<ScheduledTask>
+router.post('/', async (c) => {
+  const body = await c.req.json() as Partial<Schedule>
+  if (!body.name || !body.intentType || !body.frequency)
+    return c.json({ success: false, error: 'name, intentType, frequency required' }, 400)
 
-  if (!body.intentType || !body.name || !body.frequency) {
-    return c.json({
-      success: false,
-      error: 'name, intentType, and frequency are required'
-    }, 400)
-  }
-
-  const task: ScheduledTask = {
-    id: `sched-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+  const s: Schedule = {
+    id: genId('sched'),
     name: body.name,
+    description: body.description ?? '',
     intentType: body.intentType as IntentType,
-    frequency: body.frequency as ScheduleFrequency,
-    dayOfWeek: body.dayOfWeek as DayOfWeek | undefined,
+    agentName: body.agentName ?? 'BusinessHealthAgent',
+    frequency: body.frequency,
+    dayOfWeek: body.dayOfWeek,
     hour: body.hour ?? 9,
     isActive: true,
-    nextRun: computeNextRun(body.frequency as ScheduleFrequency, body.dayOfWeek as DayOfWeek | undefined, body.hour ?? 9),
+    nextRun: computeNextRun(body.frequency, body.dayOfWeek, body.hour ?? 9),
     createdAt: new Date().toISOString(),
-    description: body.description ?? `Scheduled ${body.intentType} task`,
-    aiModel: body.aiModel ?? 'claude',
-    contextParams: body.contextParams ?? {}
+    contextParams: body.contextParams ?? {},
+    totalRuns: 0,
+    intentsGenerated: 0
   }
-
-  saveSchedule(task)
-
-  return c.json({
-    success: true,
-    data: task,
-    message: `✅ Schedule "${task.name}" created. It will generate intents for your review, not take automatic actions.`,
-    timestamp: new Date().toISOString()
-  })
+  ScheduleStore.save(s)
+  return c.json({ success: true, data: s, message: '✅ Schedule created. Intents will be generated automatically for your review.', timestamp: new Date().toISOString() })
 })
 
-// ── PATCH /api/schedules/:id ─────────────────────────────────
-schedules.patch('/:id', async (c) => {
-  const id = c.req.param('id')
-  const body = await c.req.json() as Partial<ScheduledTask>
-
-  const existing = getSchedule(id)
-  if (!existing) {
-    return c.json({ success: false, error: 'Schedule not found' }, 404)
-  }
-
-  const updated = updateSchedule(id, {
+router.patch('/:id', async (c) => {
+  const body = await c.req.json()
+  const ex = ScheduleStore.get(c.req.param('id'))
+  if (!ex) return c.json({ success: false, error: 'Schedule not found' }, 404)
+  const updated = ScheduleStore.update(c.req.param('id'), {
     ...body,
-    nextRun: body.frequency
-      ? computeNextRun(body.frequency, body.dayOfWeek, body.hour ?? existing.hour)
-      : existing.nextRun
+    nextRun: body.frequency ? computeNextRun(body.frequency, body.dayOfWeek, body.hour ?? ex.hour) : ex.nextRun
   })
-
-  return c.json({
-    success: true,
-    data: updated,
-    message: 'Schedule updated',
-    timestamp: new Date().toISOString()
-  })
+  return c.json({ success: true, data: updated, timestamp: new Date().toISOString() })
 })
 
-// ── DELETE /api/schedules/:id ────────────────────────────────
-schedules.delete('/:id', (c) => {
-  const id = c.req.param('id')
-  const deleted = deleteSchedule(id)
-
-  if (!deleted) {
+router.delete('/:id', (c) => {
+  if (!ScheduleStore.delete(c.req.param('id')))
     return c.json({ success: false, error: 'Schedule not found' }, 404)
-  }
-
   return c.json({ success: true, message: 'Schedule deleted', timestamp: new Date().toISOString() })
 })
 
-// ── POST /api/schedules/:id/run ──────────────────────────────
-// Manually triggers a scheduled task immediately
-// Generates an intent for review — DOES NOT execute any action
-// ─────────────────────────────────────────────────────────────
-schedules.post('/:id/run', async (c) => {
-  const id = c.req.param('id')
-  const task = getSchedule(id)
-
-  if (!task) {
-    return c.json({ success: false, error: 'Schedule not found' }, 404)
-  }
-
+// POST /api/schedules/:id/run — Manually run a schedule
+router.post('/:id/run', async (c) => {
+  const s = ScheduleStore.get(c.req.param('id'))
+  if (!s) return c.json({ success: false, error: 'Schedule not found' }, 404)
   try {
-    const userProfile = getUserProfile()
-    const intent = await generateIntent(
-      task.intentType,
-      task.contextParams ?? {},
-      userProfile,
-      c.env,
-      task.id
-    )
-
-    saveIntent(intent)
-    updateSchedule(id, { lastRun: new Date().toISOString() })
-
-    return c.json({
-      success: true,
-      data: { intent, task },
-      message: `✅ "${task.name}" ran successfully. Intent generated and awaiting your review.`,
-      timestamp: new Date().toISOString()
+    const intent = await runAgent(s.agentName as AgentName, s.intentType as IntentType, s.contextParams, c.env, s.id)
+    IntentStore.save(intent)
+    AgentStore.incrementIntents(s.agentName as AgentName)
+    ScheduleStore.update(s.id, {
+      lastRun: new Date().toISOString(),
+      totalRuns: s.totalRuns + 1,
+      intentsGenerated: s.intentsGenerated + 1
     })
+    AgentLogStore.push({
+      id: genId('log'), agentName: s.agentName as AgentName, action: 'schedule_run',
+      intentId: intent.id, status: 'success',
+      message: `Schedule "${s.name}" ran successfully`, timestamp: new Date().toISOString()
+    })
+    return c.json({ success: true, data: { intent, schedule: s }, message: `✅ "${s.name}" ran. Intent generated for your review.`, timestamp: new Date().toISOString() })
   } catch (err) {
-    return c.json({
-      success: false,
-      error: err instanceof Error ? err.message : 'Failed to run scheduled task'
-    }, 500)
+    return c.json({ success: false, error: err instanceof Error ? err.message : 'Run failed' }, 500)
   }
 })
 
-// ── POST /api/schedules/run-due ──────────────────────────────
-// Runs all tasks that are due (called by cron or polling)
-// ─────────────────────────────────────────────────────────────
-schedules.post('/run-due', async (c) => {
-  const now = new Date()
-  const activeTasks = getAllSchedules().filter(t => t.isActive && new Date(t.nextRun) <= now)
+// POST /api/schedules/run-due — Process all due scheduled tasks
+router.post('/run-due', async (c) => {
+  const due = ScheduleStore.due()
+  const results: Array<{ scheduleId: string; intentId: string; success: boolean }> = []
 
-  const results: Array<{ taskId: string; intentId: string; success: boolean }> = []
-
-  for (const task of activeTasks) {
+  for (const s of due) {
     try {
-      const userProfile = getUserProfile()
-      const intent = await generateIntent(
-        task.intentType,
-        task.contextParams ?? {},
-        userProfile,
-        c.env,
-        task.id
-      )
-      saveIntent(intent)
-      updateSchedule(task.id, {
+      const intent = await runAgent(s.agentName as AgentName, s.intentType as IntentType, s.contextParams, c.env, s.id)
+      IntentStore.save(intent)
+      AgentStore.incrementIntents(s.agentName as AgentName)
+      ScheduleStore.update(s.id, {
         lastRun: new Date().toISOString(),
-        nextRun: computeNextRun(task.frequency, task.dayOfWeek, task.hour ?? 9)
+        nextRun: computeNextRun(s.frequency, s.dayOfWeek, s.hour),
+        totalRuns: s.totalRuns + 1,
+        intentsGenerated: s.intentsGenerated + 1
       })
-      results.push({ taskId: task.id, intentId: intent.id, success: true })
+      results.push({ scheduleId: s.id, intentId: intent.id, success: true })
     } catch {
-      results.push({ taskId: task.id, intentId: '', success: false })
+      results.push({ scheduleId: s.id, intentId: '', success: false })
     }
   }
 
-  return c.json({
-    success: true,
-    data: { ran: results.length, results },
-    message: `Processed ${results.length} due tasks`,
-    timestamp: new Date().toISOString()
-  })
+  return c.json({ success: true, data: { ran: results.length, results }, timestamp: new Date().toISOString() })
 })
 
-// ============================================================
-// HELPERS
-// ============================================================
-
-function computeNextRun(
-  frequency: ScheduleFrequency,
-  dayOfWeek?: DayOfWeek,
-  hour = 9
-): string {
-  const now = new Date()
-  const next = new Date(now)
-  next.setHours(hour, 0, 0, 0)
-
-  if (frequency === 'daily') {
-    if (next <= now) next.setDate(next.getDate() + 1)
-    return next.toISOString()
-  }
-
-  if (frequency === 'weekly' && dayOfWeek) {
-    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-    const target = days.indexOf(dayOfWeek)
-    const current = now.getDay()
-    let diff = (target - current + 7) % 7
-    if (diff === 0 && next <= now) diff = 7
-    next.setDate(now.getDate() + diff)
-    return next.toISOString()
-  }
-
-  if (frequency === 'biweekly' && dayOfWeek) {
-    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-    const target = days.indexOf(dayOfWeek)
-    const current = now.getDay()
-    let diff = (target - current + 7) % 7
-    if (diff === 0 && next <= now) diff = 14
-    else diff += 7
-    next.setDate(now.getDate() + diff)
-    return next.toISOString()
-  }
-
-  if (frequency === 'monthly') {
-    next.setMonth(next.getMonth() + 1)
-    next.setDate(1)
-    return next.toISOString()
-  }
-
-  // Default: tomorrow
-  next.setDate(next.getDate() + 1)
-  return next.toISOString()
-}
-
-export default schedules
+export default router
