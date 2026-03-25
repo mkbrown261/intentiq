@@ -1,15 +1,17 @@
 // ================================================================
 // INTENT ROUTES — /api/intents
 // All outputs are INTENTS. All actions require human approval.
+// Token gating: each generation costs platform tokens.
 // ================================================================
 import { Hono } from 'hono'
-import type { Env } from '../lib/agents'
+import type { Env } from '../lib/platform'
 import type { IntentType, AgentName, ApproveIntentRequest } from '../types/core'
 import { runAgent } from '../lib/agents'
 import {
   IntentStore, ApprovalStore, ProfileStore, HealthStore,
   AgentStore, AgentLogStore, getDashboardStats, genId
 } from '../lib/store'
+import { callPlatformAI } from '../lib/platform'
 
 const router = new Hono<{ Bindings: Env }>()
 
@@ -48,6 +50,28 @@ router.post('/generate', async (c) => {
       workflowId?: string
     }
     if (!body.intentType) return c.json({ success: false, error: 'intentType required' }, 400)
+
+    // Token gate: check if user has tokens remaining
+    const userId = (c.get('userId') as string) ?? 'user-demo'
+    if (c.env?.DB) {
+      // Check token budget before calling AI
+      const tokenCheck = await callPlatformAI({
+        userId,
+        requestType: 'intent_generate',
+        systemPrompt: '', // Will be checked only
+        userPrompt: '',
+        preferredModel: 'demo' // Just check budget
+      }, c.env as Env)
+
+      if (!tokenCheck.tokenUsageResult.allowed) {
+        return c.json({
+          success: false,
+          error: tokenCheck.tokenUsageResult.reason ?? 'Token limit reached',
+          upgradeRequired: true,
+          tokensRemaining: tokenCheck.tokenUsageResult.tokensRemaining
+        }, 429)
+      }
+    }
 
     // Determine which agent handles this intent type
     const agentName = body.agentName ?? resolveAgent(body.intentType)

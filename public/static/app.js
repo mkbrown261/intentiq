@@ -1836,15 +1836,29 @@ async function init() {
     }
   } catch(_) {}
 
+  // Load token status
+  await loadTokenStatus();
+
+  // Check onboarding
+  const needsOnboarding = await checkOnboarding();
+  if(needsOnboarding) {
+    showOnboardingModal();
+    return;
+  }
+
   // Seed initial intents if empty
   await ensureIntents();
 
   // Render default page
   await nav('today');
 
+  // Init chat bubble
+  initChatBubble();
+
   // Poll every 60s for new scheduled intents
   setInterval(async () => {
     await refreshStats();
+    await loadTokenStatus();
   }, 60000);
 }
 
@@ -1861,6 +1875,519 @@ async function ensureIntents() {
       try { await api.post('/intents/generate',s); } catch(_){}
     }
   }
+}
+
+// ================================================================
+// TOKEN ECONOMY UI
+// ================================================================
+async function loadTokenStatus() {
+  try {
+    const r = await api.get('/chat/tokens');
+    if(r.success && r.data) {
+      S.tokens = r.data;
+      renderTokenBar();
+    }
+  } catch(_) {
+    S.tokens = {tokensGranted:50000,tokensUsed:0,tokensRemaining:50000,planName:'starter',percentage:0,hasChat:true};
+    renderTokenBar();
+  }
+}
+
+function renderTokenBar() {
+  const t = S.tokens;
+  if(!t) return;
+  const pct = t.percentage || Math.round((t.tokensUsed/t.tokensGranted)*100) || 0;
+  const barColor = pct>=90?'bg-red-500':pct>=70?'bg-amber-500':'bg-emerald-500';
+  const planColor = t.planName==='pro'?'text-violet-400':t.planName==='starter'?'text-blue-400':'text-gray-400';
+
+  // Insert or update token bar in sidebar
+  let tokenEl = document.getElementById('token-bar');
+  if(!tokenEl) {
+    tokenEl = document.createElement('div');
+    tokenEl.id = 'token-bar';
+    tokenEl.className = 'mx-3 mb-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10';
+    const sidebar = document.querySelector('aside nav');
+    if(sidebar) sidebar.insertBefore(tokenEl, sidebar.firstChild);
+  }
+
+  tokenEl.innerHTML = `
+    <div class="flex items-center justify-between mb-1">
+      <span class="text-[10px] text-white/50 font-medium uppercase tracking-wider">AI Tokens</span>
+      <span class="text-[10px] ${planColor} font-bold uppercase">${t.displayName||t.planName||'Free'}</span>
+    </div>
+    <div class="h-1.5 bg-white/10 rounded-full overflow-hidden mb-1">
+      <div class="h-full ${barColor} rounded-full transition-all duration-500" style="width:${pct}%"></div>
+    </div>
+    <div class="flex justify-between">
+      <span class="text-[10px] text-white/40">${(t.tokensUsed||0).toLocaleString()} used</span>
+      <span class="text-[10px] text-white/60">${(t.tokensRemaining||0).toLocaleString()} left</span>
+    </div>
+  `;
+}
+
+// ================================================================
+// ONBOARDING FLOW
+// ================================================================
+async function checkOnboarding() {
+  try {
+    const r = await api.get('/onboarding/status');
+    if(r.success && r.data) {
+      return !r.data.isComplete;
+    }
+  } catch(_) {}
+  return false;
+}
+
+let onboardingStep = 0;
+const onboardingData = {};
+
+function showOnboardingModal() {
+  onboardingStep = 1;
+  renderOnboardingStep();
+}
+
+function renderOnboardingStep() {
+  const steps = [null, renderOnboard1, renderOnboard2, renderOnboard3, renderOnboard4, renderOnboard5];
+  const fn = steps[onboardingStep];
+  if(fn) openModal(fn());
+}
+window.renderOnboardingStep = renderOnboardingStep;
+
+function renderOnboard1() {
+  return `
+    <div class="p-6">
+      <div class="text-center mb-6">
+        <div class="w-16 h-16 bg-violet-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+          <i class="fas fa-brain text-violet-600 text-2xl"></i>
+        </div>
+        <h2 class="text-xl font-bold text-gray-800">Welcome to IntentIQ OS</h2>
+        <p class="text-sm text-gray-500 mt-1">Your AI-powered business operating system. Let's set up your profile in 2 minutes.</p>
+      </div>
+      <div class="bg-violet-50 rounded-xl p-4 mb-5 border border-violet-100">
+        <div class="flex items-start gap-3">
+          <i class="fas fa-shield-alt text-violet-500 mt-0.5"></i>
+          <div>
+            <div class="font-semibold text-violet-800 text-sm">Safe Mode — Always On</div>
+            <div class="text-xs text-violet-600 mt-0.5">IntentIQ generates recommendations only. Nothing is executed without your explicit approval. AI keys are platform-managed — you never need to provide them.</div>
+          </div>
+        </div>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Business Name *</label>
+          <input id="ob-bname" type="text" placeholder="e.g. Natural Hair Co." value="${onboardingData.businessName||''}" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Your Niche / Industry *</label>
+          <input id="ob-niche" type="text" placeholder="e.g. natural hair products, skincare, fitness gear" value="${onboardingData.niche||''}" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Selling Platform</label>
+          <select id="ob-platform" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+            <option value="shopify" ${onboardingData.platform==='shopify'?'selected':''}>Shopify</option>
+            <option value="amazon" ${onboardingData.platform==='amazon'?'selected':''}>Amazon</option>
+            <option value="etsy" ${onboardingData.platform==='etsy'?'selected':''}>Etsy</option>
+            <option value="woocommerce" ${onboardingData.platform==='woocommerce'?'selected':''}>WooCommerce</option>
+            <option value="multi" ${onboardingData.platform==='multi'?'selected':''}>Multi-platform</option>
+            <option value="other" ${onboardingData.platform==='other'?'selected':''}>Other</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex items-center justify-between mt-2">
+        <div class="flex gap-1">${[1,2,3,4,5].map(i=>`<div class="w-6 h-1.5 rounded-full ${i===1?'bg-violet-500':'bg-gray-200'}"></div>`).join('')}</div>
+        <button onclick="nextOnboard(1)" class="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors">
+          Next <i class="fas fa-arrow-right ml-1"></i>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function renderOnboard2() {
+  return `
+    <div class="p-6">
+      <h3 class="font-bold text-gray-800 text-lg mb-1"><i class="fas fa-dollar-sign text-emerald-500 mr-2"></i>Business Metrics</h3>
+      <p class="text-sm text-gray-500 mb-4">Help your AI agents give accurate recommendations.</p>
+      <div class="space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Monthly Revenue (approx)</label>
+            <select id="ob-revenue" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+              <option value="0">Just starting</option>
+              <option value="1000" ${onboardingData.monthlyRevenue==1000?'selected':''}>Under $1K</option>
+              <option value="5000" ${onboardingData.monthlyRevenue==5000?'selected':''}>$1K–$5K</option>
+              <option value="10000" ${onboardingData.monthlyRevenue==10000?'selected':''}>$5K–$10K</option>
+              <option value="25000" ${onboardingData.monthlyRevenue==25000?'selected':''}>$10K–$25K</option>
+              <option value="50000" ${onboardingData.monthlyRevenue==50000?'selected':''}>$25K–$50K</option>
+              <option value="100000" ${onboardingData.monthlyRevenue==100000?'selected':''}>$50K+</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Team Size</label>
+            <select id="ob-team" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white">
+              <option value="solo" ${onboardingData.teamSize==='solo'?'selected':''}>Solo founder</option>
+              <option value="small" ${onboardingData.teamSize==='small'?'selected':''}>Small (2–5)</option>
+              <option value="medium" ${onboardingData.teamSize==='medium'?'selected':''}>Medium (6–20)</option>
+              <option value="large" ${onboardingData.teamSize==='large'?'selected':''}>Large (20+)</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Pricing Strategy</label>
+          <div class="grid grid-cols-3 gap-2">
+            ${['aggressive','moderate','premium'].map(p=>`
+              <button onclick="selectStyle('pricing','${p}')" id="ps-${p}" class="p-2.5 rounded-xl border-2 text-xs font-semibold transition-colors ${onboardingData.pricingStyle===p?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 text-gray-500 hover:border-violet-300'}">
+                ${p==='aggressive'?'🏷️ Aggressive':p==='moderate'?'⚖️ Moderate':'💎 Premium'}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Risk Tolerance</label>
+          <div class="grid grid-cols-3 gap-2">
+            ${['conservative','balanced','aggressive'].map(r=>`
+              <button onclick="selectStyle('risk','${r}')" id="rt-${r}" class="p-2.5 rounded-xl border-2 text-xs font-semibold transition-colors ${onboardingData.riskTolerance===r?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 text-gray-500 hover:border-violet-300'}">
+                ${r==='conservative'?'🛡️ Conservative':r==='balanced'?'⚖️ Balanced':'🚀 Aggressive'}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center justify-between mt-4">
+        <button onclick="onboardingStep=1;renderOnboardingStep()" class="text-gray-400 text-sm hover:text-gray-600 flex items-center gap-1"><i class="fas fa-arrow-left"></i> Back</button>
+        <div class="flex gap-1">${[1,2,3,4,5].map(i=>`<div class="w-6 h-1.5 rounded-full ${i<=2?'bg-violet-500':'bg-gray-200'}"></div>`).join('')}</div>
+        <button onclick="nextOnboard(2)" class="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors">Next <i class="fas fa-arrow-right ml-1"></i></button>
+      </div>
+    </div>
+  `;
+}
+
+function renderOnboard3() {
+  const cats = ['Hair Care','Skin Care','Beauty','Fitness','Supplements','Apparel','Tech Accessories','Home Goods','Food & Beverage','Pets','Books','Crafts'];
+  const selected = onboardingData.focusCategories || [];
+  return `
+    <div class="p-6">
+      <h3 class="font-bold text-gray-800 text-lg mb-1"><i class="fas fa-th-large text-violet-500 mr-2"></i>Focus Categories</h3>
+      <p class="text-sm text-gray-500 mb-4">Select up to 4 categories your business focuses on. Your agents will prioritize these.</p>
+      <div class="grid grid-cols-3 gap-2 mb-4">
+        ${cats.map(cat=>`
+          <button onclick="toggleCategory('${cat}')" id="cat-${cat.replace(/\s+/g,'-')}" class="p-2.5 rounded-xl border-2 text-xs font-medium transition-colors ${selected.includes(cat)?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 text-gray-600 hover:border-violet-300'}">
+            ${cat}
+          </button>
+        `).join('')}
+      </div>
+      <div>
+        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Top Products (comma separated)</label>
+        <input id="ob-products" type="text" placeholder="e.g. Shea Moisture Curl Cream, Edge Control, Hair Oil" value="${(onboardingData.topProducts||[]).join(', ')}" class="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
+      </div>
+      <div class="flex items-center justify-between mt-4">
+        <button onclick="onboardingStep=2;renderOnboardingStep()" class="text-gray-400 text-sm hover:text-gray-600 flex items-center gap-1"><i class="fas fa-arrow-left"></i> Back</button>
+        <div class="flex gap-1">${[1,2,3,4,5].map(i=>`<div class="w-6 h-1.5 rounded-full ${i<=3?'bg-violet-500':'bg-gray-200'}"></div>`).join('')}</div>
+        <button onclick="nextOnboard(3)" class="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors">Next <i class="fas fa-arrow-right ml-1"></i></button>
+      </div>
+    </div>
+  `;
+}
+
+function renderOnboard4() {
+  const goals = ['Increase Revenue','Improve Inventory Management','Launch New Products','Grow Email List','Optimize Pricing','Reduce Costs','Enter New Markets','Improve Customer Retention'];
+  const selected = onboardingData.goals || [];
+  return `
+    <div class="p-6">
+      <h3 class="font-bold text-gray-800 text-lg mb-1"><i class="fas fa-bullseye text-violet-500 mr-2"></i>Business Goals</h3>
+      <p class="text-sm text-gray-500 mb-4">What are your top priorities? Select all that apply. Your AI agents will focus on these.</p>
+      <div class="grid grid-cols-2 gap-2 mb-4">
+        ${goals.map(g=>`
+          <button onclick="toggleGoal('${g}')" id="goal-${g.replace(/\s+/g,'-')}" class="p-3 rounded-xl border-2 text-xs font-medium text-left transition-colors ${selected.includes(g)?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 text-gray-600 hover:border-violet-300'}">
+            ${g}
+          </button>
+        `).join('')}
+      </div>
+      <div class="flex items-center justify-between mt-4">
+        <button onclick="onboardingStep=3;renderOnboardingStep()" class="text-gray-400 text-sm hover:text-gray-600 flex items-center gap-1"><i class="fas fa-arrow-left"></i> Back</button>
+        <div class="flex gap-1">${[1,2,3,4,5].map(i=>`<div class="w-6 h-1.5 rounded-full ${i<=4?'bg-violet-500':'bg-gray-200'}"></div>`).join('')}</div>
+        <button onclick="nextOnboard(4)" class="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors">Next <i class="fas fa-arrow-right ml-1"></i></button>
+      </div>
+    </div>
+  `;
+}
+
+function renderOnboard5() {
+  return `
+    <div class="p-6 text-center">
+      <div class="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+        <i class="fas fa-rocket text-emerald-600 text-2xl"></i>
+      </div>
+      <h3 class="font-bold text-gray-800 text-xl mb-1">You're all set!</h3>
+      <p class="text-sm text-gray-500 mb-4">Your AI agents are ready. We'll generate your first business analysis right now.</p>
+      <div class="bg-gray-50 rounded-xl p-4 mb-5 text-left space-y-2">
+        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Your Setup Summary</div>
+        <div class="flex gap-2 text-sm"><span class="text-gray-400 w-28">Business:</span><span class="font-medium text-gray-700">${esc(onboardingData.businessName||'')}</span></div>
+        <div class="flex gap-2 text-sm"><span class="text-gray-400 w-28">Niche:</span><span class="font-medium text-gray-700">${esc(onboardingData.niche||'')}</span></div>
+        <div class="flex gap-2 text-sm"><span class="text-gray-400 w-28">Platform:</span><span class="font-medium text-gray-700 capitalize">${esc(onboardingData.platform||'')}</span></div>
+        <div class="flex gap-2 text-sm"><span class="text-gray-400 w-28">AI Keys:</span><span class="font-medium text-emerald-600"><i class="fas fa-check-circle mr-1"></i>Platform-managed (no setup needed)</span></div>
+      </div>
+      <button onclick="completeOnboarding()" id="ob-finish-btn" class="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+        <i class="fas fa-magic"></i> Launch My AI Team
+      </button>
+      <div class="flex gap-1 justify-center mt-3">${[1,2,3,4,5].map(i=>`<div class="w-6 h-1.5 rounded-full bg-violet-500"></div>`).join('')}</div>
+    </div>
+  `;
+}
+
+function selectStyle(type, val) {
+  if(type==='pricing') {
+    onboardingData.pricingStyle = val;
+    ['aggressive','moderate','premium'].forEach(p => {
+      const el = document.getElementById(`ps-${p}`);
+      if(el) { el.className = el.className.replace(/border-violet-500 bg-violet-50 text-violet-700|border-gray-200 text-gray-500/g,''); el.classList.add(p===val?'border-violet-500':'border-gray-200', p===val?'bg-violet-50':'','text-'+(p===val?'violet':'gray')+'-'+(p===val?'700':'500')); }
+    });
+  } else {
+    onboardingData.riskTolerance = val;
+    ['conservative','balanced','aggressive'].forEach(r => {
+      const el = document.getElementById(`rt-${r}`);
+      if(el) { el.className = el.className.replace(/border-violet-500 bg-violet-50 text-violet-700|border-gray-200 text-gray-500/g,''); el.classList.toggle('border-violet-500',r===val); el.classList.toggle('border-gray-200',r!==val); }
+    });
+  }
+}
+window.selectStyle = selectStyle;
+
+function toggleCategory(cat) {
+  onboardingData.focusCategories = onboardingData.focusCategories || [];
+  const idx = onboardingData.focusCategories.indexOf(cat);
+  if(idx>=0) { onboardingData.focusCategories.splice(idx,1); } else if(onboardingData.focusCategories.length<4) { onboardingData.focusCategories.push(cat); } else { toast('Max 4 categories','warning'); return; }
+  const el = document.getElementById('cat-'+cat.replace(/\s+/g,'-'));
+  if(el) { el.classList.toggle('border-violet-500',idx<0); el.classList.toggle('bg-violet-50',idx<0); el.classList.toggle('text-violet-700',idx<0); el.classList.toggle('border-gray-200',idx>=0); el.classList.toggle('text-gray-600',idx>=0); }
+}
+window.toggleCategory = toggleCategory;
+
+function toggleGoal(g) {
+  onboardingData.goals = onboardingData.goals || [];
+  const idx = onboardingData.goals.indexOf(g);
+  if(idx>=0) { onboardingData.goals.splice(idx,1); } else { onboardingData.goals.push(g); }
+  const el = document.getElementById('goal-'+g.replace(/\s+/g,'-'));
+  if(el) { el.classList.toggle('border-violet-500',idx<0); el.classList.toggle('bg-violet-50',idx<0); el.classList.toggle('text-violet-700',idx<0); el.classList.toggle('border-gray-200',idx>=0); el.classList.toggle('text-gray-600',idx>=0); }
+}
+window.toggleGoal = toggleGoal;
+
+function nextOnboard(step) {
+  if(step===1) {
+    const bname = document.getElementById('ob-bname')?.value?.trim();
+    const niche = document.getElementById('ob-niche')?.value?.trim();
+    const platform = document.getElementById('ob-platform')?.value;
+    if(!bname) { toast('Please enter your business name','warning'); return; }
+    if(!niche) { toast('Please enter your niche or industry','warning'); return; }
+    onboardingData.businessName = bname;
+    onboardingData.niche = niche;
+    onboardingData.platform = platform;
+    onboardingStep = 2;
+  } else if(step===2) {
+    onboardingData.monthlyRevenue = parseInt(document.getElementById('ob-revenue')?.value||'0');
+    onboardingData.teamSize = document.getElementById('ob-team')?.value||'solo';
+    if(!onboardingData.pricingStyle) onboardingData.pricingStyle = 'moderate';
+    if(!onboardingData.riskTolerance) onboardingData.riskTolerance = 'balanced';
+    onboardingStep = 3;
+  } else if(step===3) {
+    const prods = document.getElementById('ob-products')?.value?.trim();
+    onboardingData.topProducts = prods ? prods.split(',').map(p=>p.trim()).filter(Boolean) : [];
+    onboardingStep = 4;
+  } else if(step===4) {
+    onboardingStep = 5;
+  }
+  renderOnboardingStep();
+}
+window.nextOnboard = nextOnboard;
+
+async function completeOnboarding() {
+  const btn = document.getElementById('ob-finish-btn');
+  if(btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Setting up your AI team...';
+  try {
+    const r = await api.post('/onboarding/complete', onboardingData);
+    if(r.success) {
+      toast(`🚀 Welcome to IntentIQ, ${onboardingData.businessName}!`, 'success');
+      closeModal();
+      // Start the app now
+      await ensureIntents();
+      await nav('today');
+      initChatBubble();
+      setInterval(async()=>{ await refreshStats(); await loadTokenStatus(); }, 60000);
+    } else {
+      toast('Setup failed: '+(r.error||'Unknown error'), 'error');
+      if(btn) btn.innerHTML = '<i class="fas fa-magic mr-2"></i>Try Again';
+    }
+  } catch(err) {
+    toast('Connection error. Please try again.', 'error');
+    if(btn) btn.innerHTML = '<i class="fas fa-magic mr-2"></i>Try Again';
+  }
+}
+window.completeOnboarding = completeOnboarding;
+
+// ================================================================
+// CHAT BUBBLE — Corner AI Assistant
+// ================================================================
+let chatOpen = false;
+let chatHistory = [];
+let chatTyping = false;
+
+function initChatBubble() {
+  // Remove existing if present
+  const existing = document.getElementById('chat-bubble-wrap');
+  if(existing) existing.remove();
+
+  const wrap = document.createElement('div');
+  wrap.id = 'chat-bubble-wrap';
+  wrap.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:200;font-family:Inter,sans-serif;';
+  wrap.innerHTML = `
+    <!-- Chat Window -->
+    <div id="chat-window" style="display:none;width:340px;max-height:480px;background:white;border-radius:20px;box-shadow:0 20px 60px rgba(0,0,0,0.15);border:1px solid #e2e8f0;flex-direction:column;overflow:hidden;" class="flex">
+      <!-- Header -->
+      <div style="background:linear-gradient(135deg,#1a0f3a,#4c1d95);padding:14px 16px;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:32px;height:32px;background:rgba(167,139,250,0.3);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-brain" style="color:#a78bfa;font-size:14px;"></i>
+          </div>
+          <div>
+            <div style="color:white;font-size:13px;font-weight:700;">IntentIQ Assistant</div>
+            <div style="color:rgba(167,139,250,0.8);font-size:10px;">Platform AI · Token-aware</div>
+          </div>
+        </div>
+        <button onclick="toggleChat()" style="background:rgba(255,255,255,0.1);border:none;color:white;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:12px;" title="Close">✕</button>
+      </div>
+      <!-- Messages -->
+      <div id="chat-msgs" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:200px;max-height:300px;">
+        <div style="background:#f8f4ff;border-radius:12px;padding:10px 12px;font-size:12.5px;color:#4c1d95;border:1px solid #ede9fe;">
+          👋 Hi! I'm your IntentIQ Assistant. Ask me anything about your business, AI recommendations, or strategy. What's on your mind?
+        </div>
+      </div>
+      <!-- Token bar -->
+      <div id="chat-token-info" style="padding:6px 12px;background:#f8fafc;border-top:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;font-size:10px;color:#94a3b8;">
+        <span>AI tokens: platform-managed</span>
+        <span id="chat-tokens-left" style="color:#7c3aed;font-weight:600;"></span>
+      </div>
+      <!-- Input -->
+      <div style="padding:10px 12px;border-top:1px solid #f1f5f9;display:flex;gap:8px;">
+        <input id="chat-input" type="text" placeholder="Ask anything..." maxlength="500"
+          style="flex:1;border:1px solid #e2e8f0;border-radius:12px;padding:8px 12px;font-size:12px;outline:none;font-family:Inter,sans-serif;"
+          onkeydown="if(event.key==='Enter')sendChat()"
+          onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#e2e8f0'">
+        <button onclick="sendChat()" id="chat-send-btn"
+          style="background:#7c3aed;color:white;border:none;border-radius:12px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;">
+          Send
+        </button>
+      </div>
+    </div>
+
+    <!-- Bubble Button -->
+    <button onclick="toggleChat()" id="chat-bubble-btn"
+      style="width:52px;height:52px;background:linear-gradient(135deg,#7c3aed,#4c1d95);border:none;border-radius:50%;cursor:pointer;box-shadow:0 4px 20px rgba(124,58,237,0.4);display:flex;align-items:center;justify-content:center;margin-top:10px;margin-left:auto;transition:transform 0.2s;"
+      onmouseover="this.style.transform='scale(1.08)'" onmouseout="this.style.transform='scale(1)'">
+      <i class="fas fa-comment-dots" style="color:white;font-size:18px;" id="chat-icon"></i>
+      <span id="chat-unread" style="display:none;position:absolute;top:0;right:0;background:#ef4444;color:white;border-radius:50%;width:18px;height:18px;font-size:10px;font-weight:700;align-items:center;justify-content:center;">1</span>
+    </button>
+  `;
+  document.body.appendChild(wrap);
+  updateChatTokenDisplay();
+}
+
+function toggleChat() {
+  chatOpen = !chatOpen;
+  const win = document.getElementById('chat-window');
+  const icon = document.getElementById('chat-icon');
+  const unread = document.getElementById('chat-unread');
+  if(win) win.style.display = chatOpen ? 'flex' : 'none';
+  if(icon) icon.className = chatOpen ? 'fas fa-times' : 'fas fa-comment-dots';
+  if(unread) unread.style.display = 'none';
+  if(chatOpen) {
+    updateChatTokenDisplay();
+    setTimeout(()=>document.getElementById('chat-input')?.focus(), 100);
+  }
+}
+window.toggleChat = toggleChat;
+
+function updateChatTokenDisplay() {
+  const el = document.getElementById('chat-tokens-left');
+  if(el && S.tokens) {
+    el.textContent = `${(S.tokens.tokensRemaining||0).toLocaleString()} tokens left`;
+  }
+}
+
+async function sendChat() {
+  if(chatTyping) return;
+  const input = document.getElementById('chat-input');
+  const msg = input?.value?.trim();
+  if(!msg) return;
+  input.value = '';
+
+  // Check chat access
+  if(S.tokens && !S.tokens.hasChat) {
+    addChatMsg('assistant', '💎 The chat assistant is available on Starter plan and above. Upgrade to get full access to conversational AI guidance.');
+    return;
+  }
+
+  // Check tokens
+  if(S.tokens && S.tokens.tokensRemaining <= 0) {
+    addChatMsg('assistant', '⚠️ You\'ve used all your monthly AI tokens. Upgrade your plan to continue using the chat assistant.');
+    return;
+  }
+
+  addChatMsg('user', msg);
+  chatHistory.push({role:'user', content:msg});
+
+  // Show typing
+  chatTyping = true;
+  const typingId = 'typing-'+Date.now();
+  addChatMsg('assistant', '<i class="fas fa-circle" style="animation:pulse 0.6s infinite;font-size:6px;"></i> <i class="fas fa-circle" style="animation:pulse 0.6s infinite 0.2s;font-size:6px;"></i> <i class="fas fa-circle" style="animation:pulse 0.6s infinite 0.4s;font-size:6px;"></i>', typingId);
+
+  try {
+    const r = await api.post('/chat/message', {message: msg, history: chatHistory.slice(-6)});
+    // Remove typing
+    document.getElementById(typingId)?.remove();
+    chatTyping = false;
+
+    if(r.success && r.data) {
+      const reply = r.data.reply || 'Sorry, I couldn\'t process that. Please try again.';
+      addChatMsg('assistant', reply);
+      chatHistory.push({role:'assistant', content:reply});
+      // Update token display
+      if(r.data.tokensRemaining !== undefined) {
+        if(!S.tokens) S.tokens = {};
+        S.tokens.tokensRemaining = r.data.tokensRemaining;
+        S.tokens.tokensUsed = (S.tokens.tokensGranted||50000) - r.data.tokensRemaining;
+        S.tokens.percentage = Math.round(((S.tokens.tokensUsed)/(S.tokens.tokensGranted||50000))*100);
+        updateChatTokenDisplay();
+        renderTokenBar();
+      }
+      if(r.upgradeRequired) {
+        addChatMsg('assistant', '💡 <strong>Upgrade tip:</strong> You\'ve reached your token limit. Upgrade to Starter or Pro for more AI capacity.');
+      }
+    } else if(r.upgradeRequired) {
+      document.getElementById(typingId)?.remove();
+      addChatMsg('assistant', '⚠️ You\'ve reached your monthly token limit. Upgrade your plan to continue. Visit Business Profile → Subscription.');
+    } else {
+      addChatMsg('assistant', 'Something went wrong. Please try again in a moment.');
+    }
+  } catch(err) {
+    document.getElementById(typingId)?.remove();
+    chatTyping = false;
+    addChatMsg('assistant', 'Connection error. Please check your connection and try again.');
+  }
+}
+window.sendChat = sendChat;
+
+function addChatMsg(role, content, id) {
+  const msgs = document.getElementById('chat-msgs');
+  if(!msgs) return;
+  const el = document.createElement('div');
+  if(id) el.id = id;
+  const isUser = role === 'user';
+  el.style.cssText = `border-radius:12px;padding:9px 12px;font-size:12.5px;line-height:1.5;${
+    isUser
+      ? 'background:linear-gradient(135deg,#7c3aed,#4c1d95);color:white;align-self:flex-end;max-width:85%;margin-left:auto;'
+      : 'background:#f8f4ff;color:#374151;border:1px solid #ede9fe;max-width:90%;'
+  }`;
+  el.innerHTML = content;
+  msgs.appendChild(el);
+  msgs.scrollTop = msgs.scrollHeight;
 }
 
 // Start

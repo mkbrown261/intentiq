@@ -8,12 +8,8 @@
 
 import type { Intent, AgentName, IntentType, BusinessProfile, RiskLevel, Priority } from '../types/core'
 import { genId, ProfileStore } from './store'
-
-// ── Env bindings ─────────────────────────────────────────────────
-export interface Env {
-  ANTHROPIC_API_KEY?: string
-  OPENAI_API_KEY?: string
-}
+import type { Env } from './platform'
+export type { Env }
 
 // ── AI Model Routing ─────────────────────────────────────────────
 // Each agent has a preferred model based on its task requirements

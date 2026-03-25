@@ -4,12 +4,15 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
-import type { Env } from './lib/agents'
-import intentRoutes   from './routes/intents'
-import agentRoutes    from './routes/agents'
-import workflowRoutes from './routes/workflows'
-import scheduleRoutes from './routes/schedules'
-import businessRoutes from './routes/business'
+import type { Env } from './lib/platform'
+import intentRoutes    from './routes/intents'
+import agentRoutes     from './routes/agents'
+import workflowRoutes  from './routes/workflows'
+import scheduleRoutes  from './routes/schedules'
+import businessRoutes  from './routes/business'
+import authRoutes      from './routes/auth'
+import chatRoutes      from './routes/chat'
+import onboardRoutes   from './routes/onboarding'
 import { seedSystem } from './lib/store'
 
 seedSystem()
@@ -19,21 +22,26 @@ const app = new Hono<{ Bindings: Env }>()
 app.use('*', logger())
 app.use('/api/*', cors())
 
-app.route('/api/intents',   intentRoutes)
-app.route('/api/agents',    agentRoutes)
-app.route('/api/workflows', workflowRoutes)
-app.route('/api/schedules', scheduleRoutes)
-app.route('/api/business',  businessRoutes)
+app.route('/api/intents',    intentRoutes)
+app.route('/api/agents',     agentRoutes)
+app.route('/api/workflows',  workflowRoutes)
+app.route('/api/schedules',  scheduleRoutes)
+app.route('/api/business',   businessRoutes)
+app.route('/api/auth',       authRoutes)
+app.route('/api/chat',       chatRoutes)
+app.route('/api/onboarding', onboardRoutes)
 
 app.get('/api/health', (c) => c.json({
   status: 'ok',
   system: 'IntentIQ OS — AI Business Operating System',
-  version: '3.0.0',
+  version: '4.0.0',
   architecture: 'Agents → Intent Layer → Human Approval → Action Layer',
   safeMode: true,
   philosophy: 'Guide, not execute. Suggest, not decide. Human approval required for everything.',
+  aiOwnership: 'Platform-managed. Users never supply API keys.',
   agents: 7,
   intentTypes: 21,
+  features: ['D1 Database', 'Token Economy', 'Subscription Tiers', 'Onboarding', 'Chat Assistant', 'Auth'],
   timestamp: new Date().toISOString()
 }))
 
