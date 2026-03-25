@@ -501,7 +501,8 @@ function getCategoryForIntent(type: IntentType): string {
     product_create: 'Products', product_bundle: 'Products', product_variation: 'Products',
     workflow_suggestion: 'Operations', business_health: 'Health', performance_alert: 'Health',
     seasonality_alert: 'Market Research', customer_segment: 'Marketing',
-    ad_optimization: 'Marketing', financial_insight: 'Finance', strategy_review: 'Strategy'
+    ad_optimization: 'Marketing', financial_insight: 'Finance', strategy_review: 'Strategy',
+    upgrade_suggestion: 'Platform'
   }
   return map[type] ?? 'General'
 }

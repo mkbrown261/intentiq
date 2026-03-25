@@ -63,7 +63,7 @@ const INTENT_ICONS={
   product_create:'fa-lightbulb',product_bundle:'fa-gift',product_variation:'fa-palette',
   workflow_suggestion:'fa-project-diagram',business_health:'fa-heartbeat',performance_alert:'fa-tachometer-alt',
   seasonality_alert:'fa-calendar-star',customer_segment:'fa-users',ad_optimization:'fa-bullhorn',
-  financial_insight:'fa-dollar-sign',strategy_review:'fa-chess'
+  financial_insight:'fa-dollar-sign',strategy_review:'fa-chess',upgrade_suggestion:'fa-arrow-circle-up'
 };
 const INTENT_BG={
   inventory_restock:'bg-emerald-100',inventory_liquidate:'bg-teal-100',
@@ -73,7 +73,7 @@ const INTENT_BG={
   product_create:'bg-yellow-100',product_bundle:'bg-lime-100',product_variation:'bg-cyan-100',
   business_health:'bg-red-100',performance_alert:'bg-orange-100',strategy_review:'bg-indigo-100',
   customer_segment:'bg-sky-100',financial_insight:'bg-green-100',ad_optimization:'bg-pink-100',
-  workflow_suggestion:'bg-slate-100',seasonality_alert:'bg-amber-100'
+  workflow_suggestion:'bg-slate-100',seasonality_alert:'bg-amber-100',upgrade_suggestion:'bg-violet-100'
 };
 const INTENT_IC={
   inventory_restock:'text-emerald-600',inventory_liquidate:'text-teal-600',
@@ -83,7 +83,7 @@ const INTENT_IC={
   product_create:'text-yellow-600',product_bundle:'text-lime-600',product_variation:'text-cyan-600',
   business_health:'text-red-600',performance_alert:'text-orange-600',strategy_review:'text-indigo-600',
   customer_segment:'text-sky-600',financial_insight:'text-green-600',ad_optimization:'text-pink-600',
-  workflow_suggestion:'text-slate-600',seasonality_alert:'text-amber-600'
+  workflow_suggestion:'text-slate-600',seasonality_alert:'text-amber-600',upgrade_suggestion:'text-violet-600'
 };
 const AGENT_COLORS={
   MarketResearchAgent:'violet',PricingAgent:'amber',InventoryAgent:'emerald',
@@ -103,7 +103,7 @@ const INTENT_TYPES_BY_AGENT = {
   InventoryAgent: ['inventory_restock','inventory_liquidate','performance_alert'],
   EmailMarketingAgent: ['email_campaign','email_abandoned_cart','email_reengagement','customer_segment'],
   ProductCreationAgent: ['product_create','product_bundle','product_variation'],
-  BusinessHealthAgent: ['business_health','performance_alert','financial_insight'],
+  BusinessHealthAgent: ['business_health','performance_alert','financial_insight','upgrade_suggestion'],
   StrategyAgent: ['strategy_review','workflow_suggestion','ad_optimization']
 };
 
