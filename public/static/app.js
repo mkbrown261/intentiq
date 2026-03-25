@@ -134,7 +134,9 @@ const PAGE_META = {
   schedules: ['Schedule Manager','Automated recurring AI analysis tasks'],
   health:    ['Business Health Score','Complete health report across all business areas'],
   profile:   ['Business Profile','Personalize your AI agents with your business context'],
-  logs:      ['Agent Activity Logs','See what your AI agents have been doing']
+  logs:      ['Agent Activity Logs','See what your AI agents have been doing'],
+  usage:     ['My Usage','Token usage, daily limits, plan details, and upgrade options'],
+  admin:     ['Admin Panel','Profit dashboard, abuse monitoring, system stats']
 };
 
 function nav(page) {
@@ -164,7 +166,8 @@ async function renderPage(page) {
     intents: renderIntents, agents: renderAgents,
     generate: renderGenerate, workflows: renderWorkflows,
     schedules: renderSchedules, health: renderHealth,
-    profile: renderProfile, logs: renderLogs
+    profile: renderProfile, logs: renderLogs,
+    usage: renderUsage, admin: renderAdmin
   };
   if(map[page]) await map[page]();
 }
@@ -2389,6 +2392,410 @@ function addChatMsg(role, content, id) {
   msgs.appendChild(el);
   msgs.scrollTop = msgs.scrollHeight;
 }
+
+// ================================================================
+// MY USAGE DASHBOARD
+// ================================================================
+async function renderUsage() {
+  let tokenData = S.tokens || {};
+  try {
+    const r = await api.get('/chat/tokens');
+    if(r.success && r.data) { tokenData = r.data; S.tokens = r.data; }
+  } catch(_) {}
+
+  const t = tokenData;
+  const pct = Math.min(100, Math.round(((t.tokensUsed||0) / (t.tokensGranted||10000)) * 100));
+  const dailyPct = Math.min(100, Math.round(((t.dailyUsed||0) / (t.dailyLimit||2000)) * 100));
+  const planColors = { free:'gray', starter:'blue', pro:'violet', scale:'emerald' };
+  const pc = planColors[t.planName] || 'gray';
+  const barColor = pct>=80?'bg-red-500':pct>=60?'bg-amber-500':'bg-emerald-500';
+  const dailyBarColor = dailyPct>=80?'bg-red-500':dailyPct>=60?'bg-amber-500':'bg-violet-500';
+
+  const PLAN_FEATURES = {
+    free:    { name:'Free', price:0, tokens:'10K/mo', daily:'2K/day', agents:2, schedules:0, chat:true, scheduling:false, advanced:false },
+    starter: { name:'Starter', price:10, tokens:'1.2M/mo', daily:'40K/day', agents:5, schedules:5, chat:true, scheduling:true, advanced:false },
+    pro:     { name:'Pro', price:30, tokens:'3.6M/mo', daily:'120K/day', agents:7, schedules:20, chat:true, scheduling:true, advanced:true },
+    scale:   { name:'Scale', price:100, tokens:'12M/mo', daily:'400K/day', agents:7, schedules:100, chat:true, scheduling:true, advanced:true }
+  };
+  const plans = Object.entries(PLAN_FEATURES);
+  const current = t.planName || 'free';
+
+  document.getElementById('content').innerHTML = `
+    <div class="max-w-4xl mx-auto space-y-5">
+
+      <!-- Token Usage Card -->
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="font-bold text-gray-800 text-base">AI Token Usage</h3>
+            <p class="text-xs text-gray-500">Billing period: ${t.periodStart || 'This month'}</p>
+          </div>
+          <span class="text-xs font-bold px-3 py-1 rounded-full bg-${pc}-100 text-${pc}-700 border border-${pc}-200 uppercase">${t.displayName || (t.planName||'free').toUpperCase()}</span>
+        </div>
+
+        <!-- Monthly usage -->
+        <div class="mb-4">
+          <div class="flex justify-between text-xs font-medium mb-1.5">
+            <span class="text-gray-600">Monthly Tokens</span>
+            <span class="text-gray-800">${(t.tokensUsed||0).toLocaleString()} / ${(t.tokensGranted||10000).toLocaleString()}</span>
+          </div>
+          <div class="h-3 bg-gray-100 rounded-full overflow-hidden">
+            <div class="${barColor} h-full rounded-full transition-all duration-700" style="width:${pct}%"></div>
+          </div>
+          <div class="flex justify-between text-xs text-gray-400 mt-1">
+            <span>${pct}% used</span>
+            <span>${(t.tokensRemaining||0).toLocaleString()} remaining</span>
+          </div>
+        </div>
+
+        <!-- Daily usage -->
+        <div class="mb-4">
+          <div class="flex justify-between text-xs font-medium mb-1.5">
+            <span class="text-gray-600">Today's Usage</span>
+            <span class="text-gray-800">${(t.dailyUsed||0).toLocaleString()} / ${(t.dailyLimit||2000).toLocaleString()}</span>
+          </div>
+          <div class="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div class="${dailyBarColor} h-full rounded-full transition-all" style="width:${dailyPct}%"></div>
+          </div>
+          <div class="text-xs text-gray-400 mt-1">Resets midnight UTC · ${t.requestsToday||0} requests today</div>
+        </div>
+
+        <!-- Stats row -->
+        <div class="grid grid-cols-4 gap-3">
+          ${[
+            ['Tokens Used', (t.tokensUsed||0).toLocaleString(), 'fa-coins', 'violet'],
+            ['Tokens Left', (t.tokensRemaining||0).toLocaleString(), 'fa-battery-three-quarters', 'emerald'],
+            ['Daily Left', (t.dailyRemaining||0).toLocaleString(), 'fa-clock', 'amber'],
+            ['Requests', (t.requestsToday||0)+' today', 'fa-paper-plane', 'blue']
+          ].map(([label,val,icon,color])=>`
+            <div class="bg-gray-50 rounded-xl p-3 text-center">
+              <i class="fas ${icon} text-${color}-500 text-sm mb-1"></i>
+              <div class="font-bold text-gray-800 text-sm">${val}</div>
+              <div class="text-xs text-gray-400">${label}</div>
+            </div>
+          `).join('')}
+        </div>
+
+        ${pct>=80 ? `
+          <div class="mt-4 bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-3">
+            <i class="fas fa-exclamation-triangle text-red-500"></i>
+            <div class="flex-1 text-xs text-red-700">
+              <strong>⚠️ ${pct>=100?'Token limit reached':'High token usage'}</strong> —
+              ${pct>=100 ? 'You\'ve used all your monthly tokens. Upgrade to continue.' : `You've used ${pct}% of your monthly tokens. Consider upgrading.`}
+            </div>
+            <button onclick="nav('profile')" class="bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-red-600 transition-colors">Upgrade</button>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- Features & Plan -->
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-bold text-gray-800 mb-4">Plan Features</h3>
+        <div class="grid grid-cols-2 gap-3 mb-5">
+          ${[
+            ['Chat Assistant', t.hasChat, 'fa-comments'],
+            ['Analytics', t.hasAnalytics, 'fa-chart-bar'],
+            ['Scheduling', t.hasScheduling, 'fa-calendar-alt'],
+            ['Advanced Agents', t.hasAdvancedAgents, 'fa-robot']
+          ].map(([label,enabled,icon])=>`
+            <div class="flex items-center gap-2.5 p-3 rounded-xl ${enabled?'bg-emerald-50 border border-emerald-100':'bg-gray-50 border border-gray-100'}">
+              <i class="fas ${icon} ${enabled?'text-emerald-500':'text-gray-300'} text-sm"></i>
+              <span class="text-xs font-medium ${enabled?'text-emerald-700':'text-gray-400'}">${label}</span>
+              <i class="fas ${enabled?'fa-check-circle text-emerald-500':'fa-lock text-gray-300'} ml-auto text-xs"></i>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- Plan Comparison -->
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-bold text-gray-800 mb-4">Plans</h3>
+        <div class="grid grid-cols-2 gap-3">
+          ${plans.map(([key, p])=>`
+            <div class="rounded-xl border-2 p-4 relative ${current===key?'border-violet-500 bg-violet-50':'border-gray-100 hover:border-gray-200'}">
+              ${current===key ? '<span class="absolute top-3 right-3 text-[10px] bg-violet-500 text-white px-2 py-0.5 rounded-full font-bold">Current</span>' : ''}
+              <div class="font-bold text-gray-800 mb-0.5">${p.name}</div>
+              <div class="text-lg font-extrabold text-gray-900 mb-3">${p.price===0?'Free':'$'+p.price}<span class="text-xs font-normal text-gray-400">/mo</span></div>
+              <ul class="space-y-1.5 text-xs text-gray-600">
+                <li><i class="fas fa-coins text-violet-400 w-4"></i> ${p.tokens} tokens</li>
+                <li><i class="fas fa-clock text-amber-400 w-4"></i> ${p.daily}</li>
+                <li><i class="fas fa-robot text-blue-400 w-4"></i> ${p.agents} agents</li>
+                <li><i class="fas fa-calendar text-emerald-400 w-4"></i> ${p.schedules===0?'No':'Up to '+p.schedules} schedules</li>
+                <li><i class="fas ${p.scheduling?'fa-check text-emerald-400':'fa-times text-gray-300'} w-4"></i> Scheduling</li>
+                <li><i class="fas ${p.advanced?'fa-check text-emerald-400':'fa-times text-gray-300'} w-4"></i> Advanced agents</li>
+              </ul>
+              ${current!==key ? `
+                <button onclick="toast('Contact support to upgrade to ${p.name}','info')" class="mt-3 w-full text-xs font-semibold py-1.5 rounded-lg ${p.price>0?'bg-violet-600 text-white hover:bg-violet-700':'bg-gray-100 text-gray-500'} transition-colors">
+                  ${p.price===0?'Downgrade':'Upgrade to '+p.name}
+                </button>
+              ` : ''}
+            </div>
+          `).join('')}
+        </div>
+        <p class="text-xs text-gray-400 mt-4 text-center">To change plans, contact support or configure via Stripe billing.</p>
+      </div>
+
+      <!-- Cost Transparency -->
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-bold text-gray-800 mb-3">How Tokens Work</h3>
+        <div class="grid grid-cols-2 gap-3 text-xs">
+          ${[
+            ['Intent Generation','2,000 tokens','fa-brain','violet'],
+            ['Chat Message','500 tokens','fa-comments','blue'],
+            ['Analysis','1,500 tokens','fa-chart-line','amber'],
+            ['Schedule Run','2,000 tokens','fa-calendar','emerald']
+          ].map(([action,cost,icon,color])=>`
+            <div class="flex items-center gap-2.5 bg-gray-50 rounded-xl p-3">
+              <i class="fas ${icon} text-${color}-500"></i>
+              <div>
+                <div class="font-semibold text-gray-700">${action}</div>
+                <div class="text-gray-400">${cost} per request</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="mt-3 bg-violet-50 rounded-xl p-3 text-xs text-violet-700">
+          <i class="fas fa-info-circle mr-1.5"></i>
+          <strong>Platform-managed AI:</strong> IntentIQ handles all AI infrastructure. You never need to provide API keys. Costs are pooled and allocated per your subscription tier.
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ================================================================
+// ADMIN PANEL — Profit Dashboard + Abuse Monitoring
+// ================================================================
+async function renderAdmin() {
+  let profitData = null, statsData = null, abuseData = [];
+  try {
+    const [pRes, sRes, aRes] = await Promise.all([
+      api.get('/admin/profit'),
+      api.get('/admin/stats'),
+      api.get('/admin/abuse')
+    ]);
+    if(pRes.success) profitData = pRes.data;
+    if(sRes.success) statsData = sRes.data;
+    if(aRes.success) abuseData = aRes.data || [];
+  } catch(e) {
+    document.getElementById('content').innerHTML = `<div class="p-8 text-center"><i class="fas fa-lock text-4xl text-gray-300 mb-3"></i><p class="text-gray-500">Admin access required. Set ADMIN_SECRET to enable.</p></div>`;
+    return;
+  }
+
+  const s = profitData?.summary || {};
+  const stats = statsData || {};
+  const profitMargin = s.profitMargin || 0;
+  const marginColor = profitMargin>=70?'text-emerald-600':profitMargin>=40?'text-amber-600':'text-red-600';
+  const marginBg = profitMargin>=70?'bg-emerald-50 border-emerald-200':profitMargin>=40?'bg-amber-50 border-amber-200':'bg-red-50 border-red-200';
+
+  document.getElementById('content').innerHTML = `
+    <div class="max-w-5xl mx-auto space-y-5">
+
+      <!-- Profit Summary Cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        ${[
+          ['Total Revenue', '$'+(s.totalRevenue||0).toFixed(2), 'fa-dollar-sign', 'emerald', 'This billing period'],
+          ['Total AI Cost', '$'+(s.totalCost||0).toFixed(4), 'fa-microchip', 'red', 'Actual AI spend'],
+          ['Gross Profit', '$'+(s.totalProfit||0).toFixed(2), 'fa-chart-line', 'violet', 'Revenue − cost'],
+          ['Profit Margin', (s.profitMargin||0)+'%', 'fa-percent', profitMargin>=70?'emerald':profitMargin>=40?'amber':'red', 'Platform health']
+        ].map(([label,val,icon,color,sub])=>`
+          <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 stat-card">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="w-8 h-8 rounded-xl bg-${color}-100 flex items-center justify-center">
+                <i class="fas ${icon} text-${color}-600 text-sm"></i>
+              </div>
+              <span class="text-xs text-gray-500 font-medium">${label}</span>
+            </div>
+            <div class="text-2xl font-extrabold text-gray-800">${val}</div>
+            <div class="text-xs text-gray-400 mt-0.5">${sub}</div>
+          </div>
+        `).join('')}
+      </div>
+
+      <!-- Platform Stats Row -->
+      <div class="grid grid-cols-3 gap-4">
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <div class="text-xs text-gray-500 font-medium mb-2"><i class="fas fa-users text-blue-400 mr-1"></i>Users</div>
+          <div class="text-2xl font-bold text-gray-800">${stats.users?.total||0}</div>
+          <div class="text-xs text-gray-400">+${stats.users?.new7d||0} last 7 days</div>
+        </div>
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <div class="text-xs text-gray-500 font-medium mb-2"><i class="fas fa-coins text-violet-400 mr-1"></i>Tokens Used (Period)</div>
+          <div class="text-2xl font-bold text-gray-800">${((stats.tokens?.totalUsed||0)/1000).toFixed(1)}K</div>
+          <div class="text-xs text-gray-400">${stats.tokens?.totalRequests||0} requests</div>
+        </div>
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <div class="text-xs text-gray-500 font-medium mb-2"><i class="fas fa-database text-emerald-400 mr-1"></i>Cache Performance</div>
+          <div class="text-2xl font-bold text-gray-800">${stats.cache?.total_hits||0}</div>
+          <div class="text-xs text-gray-400">${stats.cache?.active_entries||0} active entries</div>
+        </div>
+      </div>
+
+      <!-- Subscriptions Breakdown -->
+      ${(stats.subscriptions||[]).length > 0 ? `
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-bold text-gray-800 mb-4"><i class="fas fa-credit-card text-violet-500 mr-2"></i>Active Subscriptions</h3>
+        <div class="grid grid-cols-4 gap-3">
+          ${(stats.subscriptions||[]).map(sub=>`
+            <div class="bg-gray-50 rounded-xl p-3 text-center">
+              <div class="text-2xl font-bold text-gray-800">${sub.count||0}</div>
+              <div class="text-xs font-semibold text-gray-600 capitalize">${sub.name}</div>
+              <div class="text-xs text-emerald-600 font-bold">$${(sub.mrr||0).toFixed(0)} MRR</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      <!-- Per-User Profitability -->
+      ${(profitData?.perUser||[]).length > 0 ? `
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-bold text-gray-800 mb-4"><i class="fas fa-users text-blue-500 mr-2"></i>User Profitability</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="text-gray-400 border-b border-gray-100">
+                <th class="text-left pb-2">User</th>
+                <th class="text-center pb-2">Plan</th>
+                <th class="text-right pb-2">Revenue</th>
+                <th class="text-right pb-2">AI Cost</th>
+                <th class="text-right pb-2">Profit</th>
+                <th class="text-center pb-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(profitData.perUser||[]).map(u=>`
+                <tr class="border-b border-gray-50 hover:bg-gray-50">
+                  <td class="py-2 font-medium text-gray-700">${esc(u.email||'')}</td>
+                  <td class="py-2 text-center capitalize">${u.plan_name||'free'}</td>
+                  <td class="py-2 text-right text-emerald-600">$${(u.price_monthly||0).toFixed(2)}</td>
+                  <td class="py-2 text-right text-red-500">$${(u.cost_usd||0).toFixed(4)}</td>
+                  <td class="py-2 text-right font-bold ${u.is_profitable?'text-emerald-600':'text-red-600'}">$${(u.profit||0).toFixed(4)}</td>
+                  <td class="py-2 text-center">
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${u.is_profitable?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}">
+                      ${u.is_profitable?'Profitable':'Loss'}
+                    </span>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      ` : `
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-bold text-gray-800 mb-3">User Profitability</h3>
+        <div class="bg-gray-50 rounded-xl p-8 text-center text-gray-400">
+          <i class="fas fa-chart-bar text-3xl mb-3 block text-gray-200"></i>
+          No revenue data yet. Data populates when users have active paid subscriptions.
+        </div>
+      </div>
+      `}
+
+      <!-- High-Cost Alerts -->
+      ${(profitData?.highCostAlerts||[]).length > 0 ? `
+      <div class="bg-red-50 border border-red-200 rounded-2xl p-5">
+        <h3 class="font-bold text-red-800 mb-4"><i class="fas fa-exclamation-triangle text-red-500 mr-2"></i>High-Cost User Alerts</h3>
+        ${(profitData.highCostAlerts||[]).map(u=>`
+          <div class="flex items-center justify-between bg-white rounded-xl p-3 mb-2 border border-red-100">
+            <div>
+              <div class="font-medium text-gray-800 text-sm">${esc(u.email||'')}</div>
+              <div class="text-xs text-gray-500">${u.plan_name} · ${(u.tokens_used||0).toLocaleString()} tokens</div>
+            </div>
+            <div class="text-right">
+              <div class="text-red-600 font-bold text-sm">Loss: $${(u.loss||0).toFixed(4)}</div>
+              <div class="text-xs text-gray-400">Cost: $${(u.cost_usd||0).toFixed(4)}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      ` : ''}
+
+      <!-- Abuse Flags -->
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold text-gray-800"><i class="fas fa-shield-alt text-amber-500 mr-2"></i>Abuse Monitoring</h3>
+          <span class="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-bold">${abuseData.length} Active Flags</span>
+        </div>
+        ${abuseData.length===0 ? `
+          <div class="bg-emerald-50 rounded-xl p-6 text-center text-emerald-600">
+            <i class="fas fa-check-shield text-2xl mb-2 block"></i>
+            <div class="font-semibold">No active abuse flags</div>
+            <div class="text-xs text-emerald-500 mt-1">System is clean</div>
+          </div>
+        ` : `
+          <div class="space-y-2">
+            ${abuseData.slice(0,10).map(f=>`
+              <div class="flex items-center gap-3 p-3 rounded-xl border ${f.severity==='banned'?'bg-red-50 border-red-200':f.severity==='throttled'?'bg-amber-50 border-amber-200':'bg-gray-50 border-gray-100'}">
+                <i class="fas fa-flag ${f.severity==='banned'?'text-red-500':f.severity==='throttled'?'text-amber-500':'text-gray-400'} text-xs"></i>
+                <div class="flex-1 min-w-0">
+                  <div class="text-xs font-medium text-gray-700">${esc(f.email||f.user_id||'')}</div>
+                  <div class="text-xs text-gray-500 truncate">${esc(f.flag_type||'')} · ${esc(f.details||'')}</div>
+                </div>
+                <div class="flex gap-1">
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${f.severity==='banned'?'bg-red-100 text-red-700':f.severity==='throttled'?'bg-amber-100 text-amber-700':'bg-gray-100 text-gray-600'}">${f.severity}</span>
+                  <button onclick="resolveFlag('${f.id}')" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors">Resolve</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+
+      <!-- Feature Cost Breakdown -->
+      ${(profitData?.featureBreakdown||[]).length > 0 ? `
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-bold text-gray-800 mb-4"><i class="fas fa-microchip text-violet-500 mr-2"></i>AI Cost by Feature</h3>
+        <div class="space-y-2">
+          ${(profitData.featureBreakdown||[]).map(f=>`
+            <div class="flex items-center gap-3 p-2.5 bg-gray-50 rounded-xl">
+              <div class="flex-1">
+                <div class="text-xs font-medium text-gray-700 capitalize">${(f.request_type||'').replace(/_/g,' ')} <span class="text-gray-400">· ${f.model_used}</span></div>
+              </div>
+              <div class="text-xs text-gray-500">${(f.requests||0).toLocaleString()} reqs</div>
+              <div class="text-xs text-violet-600 font-medium">${((f.tokens||0)/1000).toFixed(1)}K tokens</div>
+              <div class="text-xs font-bold text-red-600">$${(f.cost||0).toFixed(6)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      <!-- Cache Actions -->
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-bold text-gray-800 mb-3"><i class="fas fa-database text-emerald-500 mr-2"></i>Cache Management</h3>
+        <div class="flex gap-3">
+          <button onclick="clearExpiredCache()" class="bg-gray-100 text-gray-700 text-xs font-semibold px-4 py-2 rounded-xl hover:bg-gray-200 transition-colors">
+            <i class="fas fa-broom mr-1.5"></i>Clear Expired Cache
+          </button>
+          <button onclick="renderAdmin()" class="bg-violet-100 text-violet-700 text-xs font-semibold px-4 py-2 rounded-xl hover:bg-violet-200 transition-colors">
+            <i class="fas fa-sync-alt mr-1.5"></i>Refresh Data
+          </button>
+        </div>
+      </div>
+
+    </div>
+  `;
+}
+
+async function resolveFlag(id) {
+  try {
+    const r = await api.post('/admin/abuse/'+id+'/resolve', {});
+    if(r.success) { toast('Flag resolved','success'); renderAdmin(); }
+    else toast('Error resolving flag','error');
+  } catch(_) { toast('Error','error'); }
+}
+window.resolveFlag = resolveFlag;
+
+async function clearExpiredCache() {
+  try {
+    const r = await fetch('/api/admin/cache', {method:'DELETE'});
+    const d = await r.json();
+    if(d.success) toast(d.message,'success');
+    else toast('Cache clear failed','error');
+  } catch(_) { toast('Error','error'); }
+}
+window.clearExpiredCache = clearExpiredCache;
 
 // Start
 init();

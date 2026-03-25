@@ -13,6 +13,7 @@ import businessRoutes  from './routes/business'
 import authRoutes      from './routes/auth'
 import chatRoutes      from './routes/chat'
 import onboardRoutes   from './routes/onboarding'
+import adminRoutes     from './routes/admin'
 import { seedSystem } from './lib/store'
 
 seedSystem()
@@ -30,18 +31,19 @@ app.route('/api/business',   businessRoutes)
 app.route('/api/auth',       authRoutes)
 app.route('/api/chat',       chatRoutes)
 app.route('/api/onboarding', onboardRoutes)
+app.route('/api/admin',      adminRoutes)
 
 app.get('/api/health', (c) => c.json({
   status: 'ok',
   system: 'IntentIQ OS — AI Business Operating System',
-  version: '4.0.0',
+  version: '5.0.0',
   architecture: 'Agents → Intent Layer → Human Approval → Action Layer',
   safeMode: true,
   philosophy: 'Guide, not execute. Suggest, not decide. Human approval required for everything.',
   aiOwnership: 'Platform-managed. Users never supply API keys.',
   agents: 7,
   intentTypes: 21,
-  features: ['D1 Database', 'Token Economy', 'Subscription Tiers', 'Onboarding', 'Chat Assistant', 'Auth'],
+  features: ['D1 Database', 'Token Economy v2', 'Anti-Abuse System', 'Profit Dashboard', 'Subscription Tiers', 'Onboarding', 'Chat Assistant', 'Auth', 'Admin Panel'],
   timestamp: new Date().toISOString()
 }))
 
@@ -220,6 +222,14 @@ const HTML = /* html */`<!DOCTYPE html>
     </button>
     <button onclick="nav('logs')" data-page="logs" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-r-lg text-white/70 text-xs mb-0.5">
       <i class="fas fa-terminal w-4 text-center text-violet-300"></i><span>Agent Logs</span>
+    </button>
+
+    <div class="nav-section">Platform</div>
+    <button onclick="nav('usage')" data-page="usage" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-r-lg text-white/70 text-xs mb-0.5">
+      <i class="fas fa-chart-bar w-4 text-center text-violet-300"></i><span>My Usage</span>
+    </button>
+    <button onclick="nav('admin')" data-page="admin" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-r-lg text-white/70 text-xs mb-0.5">
+      <i class="fas fa-shield-alt w-4 text-center text-violet-300"></i><span>Admin Panel</span>
     </button>
   </nav>
 
