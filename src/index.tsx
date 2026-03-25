@@ -14,6 +14,7 @@ import authRoutes      from './routes/auth'
 import chatRoutes      from './routes/chat'
 import onboardRoutes   from './routes/onboarding'
 import adminRoutes     from './routes/admin'
+import upgradeRoutes   from './routes/upgrade'
 import { seedSystem } from './lib/store'
 
 seedSystem()
@@ -32,18 +33,19 @@ app.route('/api/auth',       authRoutes)
 app.route('/api/chat',       chatRoutes)
 app.route('/api/onboarding', onboardRoutes)
 app.route('/api/admin',      adminRoutes)
+app.route('/api/upgrade',    upgradeRoutes)
 
 app.get('/api/health', (c) => c.json({
   status: 'ok',
   system: 'IntentIQ OS — AI Business Operating System',
-  version: '5.0.0',
+  version: '5.1.0',
   architecture: 'Agents → Intent Layer → Human Approval → Action Layer',
   safeMode: true,
   philosophy: 'Guide, not execute. Suggest, not decide. Human approval required for everything.',
   aiOwnership: 'Platform-managed. Users never supply API keys.',
   agents: 7,
   intentTypes: 21,
-  features: ['D1 Database', 'Token Economy v2', 'Anti-Abuse System', 'Profit Dashboard', 'Subscription Tiers', 'Onboarding', 'Chat Assistant', 'Auth', 'Admin Panel'],
+  features: ['D1 Database', 'Token Economy v2', 'Anti-Abuse System', 'Profit Dashboard', 'Subscription Tiers', 'Onboarding', 'Chat Assistant', 'Auth', 'Admin Panel', 'Conversion Engine', 'A/B Testing', 'Behavioral Triggers'],
   timestamp: new Date().toISOString()
 }))
 

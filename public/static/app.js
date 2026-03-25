@@ -170,6 +170,11 @@ async function renderPage(page) {
     usage: renderUsage, admin: renderAdmin
   };
   if(map[page]) await map[page]();
+
+  // After page renders, check for triggers (non-blocking, no UI interruption)
+  if (!['usage','admin'].includes(page)) {
+    setTimeout(checkUpgradeTriggers, 800);
+  }
 }
 
 // ── Stats Badge Update ────────────────────────────────────────────
@@ -214,6 +219,9 @@ async function renderToday() {
   const name     = (S.profile.businessName||'Your Business');
 
   document.getElementById('content').innerHTML = `
+    <!-- Inline Usage Bar (non-intrusive, always visible) -->
+    ${renderInlineUsageBar()}
+
     <!-- Welcome Banner -->
     <div class="page-header rounded-2xl p-5 mb-5 text-white relative overflow-hidden">
       <div class="absolute right-4 top-4 opacity-[0.06] text-[120px] leading-none pointer-events-none select-none"><i class="fas fa-brain"></i></div>
@@ -869,6 +877,11 @@ async function renderAgents() {
   const r = await api.get('/agents');
   S.agents = r.data||[];
 
+  const planName = S.tokens?.planName || 'free';
+  const hasAdvanced = ['pro','scale'].includes(planName);
+  // Advanced agents: StrategyAgent, AdOptimizationAgent-type functionality
+  const ADVANCED_AGENT_IDS = ['StrategyAgent'];
+
   document.getElementById('content').innerHTML = `
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
       ${S.agents.map(a=>`
@@ -913,6 +926,40 @@ async function renderAgents() {
         </div>
       `).join('')}
     </div>
+
+    <!-- Locked: Advanced Agents (Pro feature) -->
+    ${!hasAdvanced ? `
+      <div class="relative rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/40 overflow-hidden mb-4">
+        <!-- Blurred preview -->
+        <div class="p-5 filter blur-[3px] pointer-events-none select-none opacity-30">
+          <div class="grid grid-cols-2 gap-4">
+            ${[['StrategyAgent','Strategy Agent','fa-chess','violet','Generates strategic business plans and pivots'],['AdOptimizationAgent','Ad Optimizer','fa-bullhorn','indigo','ROI-focused ad spend recommendations']].map(([id,name,icon,color,desc])=>`
+              <div class="bg-white rounded-2xl border border-gray-100 p-4">
+                <div class="flex items-center gap-3 mb-3">
+                  <div class="w-10 h-10 rounded-xl bg-${color}-100 flex items-center justify-center"><i class="fas ${icon} text-${color}-600 text-sm"></i></div>
+                  <div><div class="font-bold text-gray-800 text-sm">${name}</div><div class="text-xs text-gray-400">${desc}</div></div>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-2"><div><div class="text-sm font-bold">47</div><div class="text-[10px] text-gray-400">Intents</div></div><div><div class="text-sm font-bold text-emerald-600">94%</div><div class="text-[10px] text-gray-400">Success</div></div><div><div class="text-sm font-bold">8</div><div class="text-[10px] text-gray-400">Types</div></div></div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <!-- Lock overlay -->
+        <div class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
+          <div class="w-14 h-14 rounded-2xl bg-white shadow-md flex items-center justify-center mb-3">
+            <i class="fas fa-robot text-purple-500 text-xl"></i>
+          </div>
+          <div class="font-bold text-gray-800 text-lg mb-1">Advanced AI Agents</div>
+          <div class="text-sm text-gray-500 max-w-xs mb-1">Unlock Strategy Agent + Ad Optimization for complete business intelligence coverage.</div>
+          <div class="text-xs text-purple-600 font-semibold mb-4">✨ Full 7-agent suite · Up to 7 agents active</div>
+          <button onclick="triggerFeatureLock('advanced_agents')"
+            class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors shadow-sm">
+            <i class="fas fa-lock-open mr-2"></i>Unlock with Pro · $30/mo
+          </button>
+          <p class="text-xs text-gray-400 mt-2">Pro plan includes all 7 specialized AI agents</p>
+        </div>
+      </div>
+    ` : ''}
   `;
 }
 
@@ -1117,6 +1164,23 @@ async function submitGenerate() {
         </div>
       `;
     }
+    // Check if this is a high-value intent → fire value_moment trigger
+    checkValueMoment(intentType);
+  } else if(r.upgradeRequired) {
+    // Token limit hit — show upgrade message in results area
+    if(resEl) resEl.innerHTML = `
+      <div class="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2">
+          <i class="fas fa-exclamation-triangle text-amber-500"></i>
+          <span class="text-sm font-bold text-amber-700">Token limit reached</span>
+        </div>
+        <div class="text-xs text-amber-600 mb-3">${esc(r.error||'Your plan tokens are exhausted for this month.')}</div>
+        <button onclick="nav('usage')" class="w-full bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold py-2.5 rounded-xl transition-colors">
+          <i class="fas fa-arrow-up mr-2"></i>Upgrade Plan →
+        </button>
+      </div>
+    `;
+    toast('Token limit reached — upgrade to continue', 'warning');
   } else {
     if(resEl) resEl.innerHTML = `<div class="mt-4 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${esc(r.error||'Generation failed')}</div>`;
     toast('Generation failed: '+(r.error||'Unknown error'),'error');
@@ -1290,15 +1354,50 @@ async function renderSchedules() {
   S.schedules = r.data||[];
 
   const freqColor = {daily:'emerald',weekly:'blue',biweekly:'violet',monthly:'amber',quarterly:'indigo'};
+  const planName = S.tokens?.planName || 'free';
+  const hasScheduling = ['starter','pro','scale'].includes(planName);
 
   document.getElementById('content').innerHTML = `
     <div class="flex items-center justify-between mb-4">
       <div class="text-sm text-gray-500">Schedules automatically generate intents for your review — nothing executes automatically.</div>
-      <button onclick="openCreateSchedule()" class="bg-violet-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-violet-700 transition-colors">
-        <i class="fas fa-plus mr-1.5"></i>New Schedule
-      </button>
+      ${hasScheduling
+        ? `<button onclick="openCreateSchedule()" class="bg-violet-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-violet-700 transition-colors"><i class="fas fa-plus mr-1.5"></i>New Schedule</button>`
+        : `<button onclick="triggerFeatureLock('scheduling')" class="bg-gray-100 text-gray-500 text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-gray-200 transition-colors"><i class="fas fa-lock mr-1.5"></i>Unlock Scheduling</button>`
+      }
     </div>
 
+    <!-- Locked feature gate for free plan -->
+    ${!hasScheduling ? `
+      <div class="relative rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/40 overflow-hidden mb-5">
+        <!-- Blurred preview rows -->
+        <div class="p-5 filter blur-[3px] pointer-events-none select-none opacity-30">
+          <div class="grid grid-cols-2 gap-3">
+            ${[['Daily Inventory Check','daily','emerald'],['Weekly Pricing Analysis','weekly','blue'],['Monthly Health Report','monthly','amber'],['Market Trend Scan','weekly','violet']].map(([n,f,c])=>`
+              <div class="bg-white rounded-2xl border border-gray-100 p-4">
+                <div class="flex items-center gap-2 mb-2"><span class="font-bold text-gray-700 text-sm">${n}</span><span class="text-[10px] px-2 py-0.5 rounded-full bg-${c}-100 text-${c}-600">${f}</span></div>
+                <div class="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-2"><div><div class="text-sm font-bold">12</div><div class="text-[10px] text-gray-400">Runs</div></div><div><div class="text-sm font-bold">36</div><div class="text-[10px] text-gray-400">Intents</div></div><div><div class="text-sm font-bold">9:00 AM</div><div class="text-[10px] text-gray-400">Time</div></div></div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <!-- Lock overlay -->
+        <div class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
+          <div class="w-14 h-14 rounded-2xl bg-white shadow-md flex items-center justify-center mb-3">
+            <i class="fas fa-calendar-alt text-violet-500 text-xl"></i>
+          </div>
+          <div class="font-bold text-gray-800 text-lg mb-1">Automated Scheduling</div>
+          <div class="text-sm text-gray-500 max-w-xs mb-1">Set AI agents to run on autopilot — daily, weekly, or monthly. Generate insights while you sleep.</div>
+          <div class="text-xs text-violet-600 font-semibold mb-4">✨ Saves 2–3 hours/week · Never miss a market shift</div>
+          <button onclick="triggerFeatureLock('scheduling')"
+            class="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors shadow-sm">
+            <i class="fas fa-lock-open mr-2"></i>Unlock with Starter · $10/mo
+          </button>
+          <p class="text-xs text-gray-400 mt-2">Upgrade to see your scheduled agents working 24/7</p>
+        </div>
+      </div>
+    ` : ''}`
+
+    ${hasScheduling ? `
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
       ${S.schedules.length===0 ? `
         <div class="col-span-2 bg-white rounded-2xl border border-gray-100 p-12 text-center">
@@ -1355,6 +1454,7 @@ async function renderSchedules() {
         </div>
       `).join('')}
     </div>
+    ` : ''}
   `;
 }
 
@@ -1827,6 +1927,432 @@ async function renderLogs() {
 }
 
 // ================================================================
+// ██████╗ ██╗   ██╗██████╗  ██████╗ ██████╗  █████╗ ██████╗ ███████╗
+// CONVERSION ENGINE — Upgrade triggers, locked features, value moments
+// Architecture: All suggestions are INTENTS. Never auto-upgrades.
+// ================================================================
+
+// ── Conversion state ──────────────────────────────────────────────
+const CVT = {
+  sessionUpgradeMentioned: false,  // Only show upgrade once per chat session
+  triggerQueue: [],                 // Pending triggers to show
+  lastTriggerShown: 0,              // Timestamp of last trigger shown
+  MIN_TRIGGER_GAP_MS: 5 * 60000,   // Min 5 min between any two triggers
+  activeTrigger: null,              // Currently showing trigger data
+  behaviorBuffer: [],               // Buffered behavior events to batch-send
+};
+
+// ── Locked feature config (mirrors backend) ───────────────────────
+const LOCKED_FEATURE_CARDS = {
+  scheduling: {
+    name: 'Automated Scheduling',
+    icon: 'fa-calendar-alt',
+    color: 'violet',
+    description: 'Set AI agents to run on autopilot — daily, weekly, or monthly.',
+    benefit: 'Saves 2-3 hours/week. Never miss a market shift or restock alert.',
+    requiredPlan: 'starter',
+    price: '$10/mo',
+    previewText: 'Your agents could be running analysis while you sleep'
+  },
+  market_research: {
+    name: 'Market Research Agent',
+    icon: 'fa-chart-line',
+    color: 'blue',
+    description: 'Deep competitor analysis, trend detection, and opportunity spotting.',
+    benefit: 'Pro users average +18% margin improvement from market insights.',
+    requiredPlan: 'starter',
+    price: '$10/mo',
+    previewText: 'Currently tracking pricing opportunities in your niche'
+  },
+  advanced_agents: {
+    name: 'Advanced AI Agents',
+    icon: 'fa-robot',
+    color: 'purple',
+    description: 'Strategy Agent + Ad Optimization + Customer Segmentation.',
+    benefit: 'Full 7-agent suite for complete business intelligence.',
+    requiredPlan: 'pro',
+    price: '$30/mo',
+    previewText: 'Your Strategy Agent has 2 high-value insights waiting'
+  },
+  analytics: {
+    name: 'Business Analytics',
+    icon: 'fa-chart-bar',
+    color: 'emerald',
+    description: 'Deep revenue trend analysis, cohort insights, performance tracking.',
+    benefit: 'Know exactly what\'s working — with data.',
+    requiredPlan: 'starter',
+    price: '$10/mo',
+    previewText: 'Revenue trend data ready — unlock to view'
+  }
+};
+
+// Plan features for comparison
+const PLAN_DETAILS = {
+  free:    { name:'Free',    price:0,   tokens:'10K/mo',   daily:'2K/day',    color:'gray'   },
+  starter: { name:'Starter', price:10,  tokens:'1.2M/mo',  daily:'40K/day',   color:'blue'   },
+  pro:     { name:'Pro',     price:30,  tokens:'3.6M/mo',  daily:'120K/day',  color:'violet' },
+  scale:   { name:'Scale',   price:100, tokens:'12M/mo',   daily:'400K/day',  color:'emerald' }
+};
+
+// ================================================================
+// TRIGGER CHECK — Called on page load and key actions
+// ================================================================
+async function checkUpgradeTrigger(hint) {
+  // Don't fire if we showed a trigger too recently
+  if (Date.now() - CVT.lastTriggerShown < CVT.MIN_TRIGGER_GAP_MS) return;
+
+  try {
+    const url = '/upgrade/check' + (hint ? '?context='+hint : '');
+    const r = await api.get(url);
+    if (r.success && r.data?.shouldShow && r.data?.trigger) {
+      scheduleTrigger(r.data.trigger);
+    }
+  } catch(_) {}
+}
+
+function scheduleTrigger(trigger) {
+  // Queue it — show after a 2s delay so it doesn't interrupt page load
+  setTimeout(() => showUpgradeTrigger(trigger), 2000);
+}
+
+// ================================================================
+// SHOW UPGRADE TRIGGER — Banner or Modal based on urgency
+// ================================================================
+function showUpgradeTrigger(trigger) {
+  // Don't spam: one at a time
+  if (document.getElementById('upgrade-trigger-banner')) return;
+
+  CVT.activeTrigger = trigger;
+  CVT.lastTriggerShown = Date.now();
+
+  if (trigger.urgency === 'critical') {
+    showUpgradeModal(trigger);
+  } else {
+    showUpgradeBanner(trigger);
+  }
+}
+
+function showUpgradeBanner(trigger) {
+  // Remove existing
+  document.getElementById('upgrade-trigger-banner')?.remove();
+
+  const urgencyStyles = {
+    low:    { bg: 'bg-violet-50 border-violet-200', text: 'text-violet-800', btn: 'bg-violet-600 hover:bg-violet-700' },
+    medium: { bg: 'bg-amber-50 border-amber-200',   text: 'text-amber-800',  btn: 'bg-amber-600 hover:bg-amber-700' },
+    high:   { bg: 'bg-red-50 border-red-200',       text: 'text-red-800',    btn: 'bg-red-600 hover:bg-red-700' }
+  };
+  const s = urgencyStyles[trigger.urgency] || urgencyStyles.medium;
+  const icons = {
+    token_50: 'fa-coins', token_80: 'fa-battery-quarter', token_100: 'fa-ban',
+    feature_lock: 'fa-lock', value_moment: 'fa-lightbulb',
+    frequency: 'fa-bolt', success_based: 'fa-trophy'
+  };
+  const icon = icons[trigger.type] || 'fa-arrow-circle-up';
+
+  const el = document.createElement('div');
+  el.id = 'upgrade-trigger-banner';
+  el.className = `${s.bg} border rounded-xl px-4 py-3 mb-4 flex items-center gap-3 shadow-sm animate-slideUp`;
+  el.innerHTML = `
+    <i class="fas ${icon} ${s.text} shrink-0"></i>
+    <div class="flex-1 min-w-0">
+      <div class="font-semibold text-sm ${s.text}">${esc(trigger.headline)}</div>
+      <div class="text-xs ${s.text} opacity-80 mt-0.5 line-clamp-1">${esc(trigger.body)}</div>
+    </div>
+    <button onclick="openUpgradeModal('${trigger.id}')"
+      class="${s.btn} text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shrink-0">
+      ${esc(trigger.cta)} →
+    </button>
+    <button onclick="dismissTrigger('${trigger.id}')"
+      class="text-gray-400 hover:text-gray-600 ml-1 shrink-0 transition-colors" title="Dismiss">
+      <i class="fas fa-times text-xs"></i>
+    </button>
+  `;
+
+  // Inject at top of content area
+  const content = document.getElementById('content');
+  if (content && content.firstChild) {
+    content.insertBefore(el, content.firstChild);
+  }
+
+  // Auto-dismiss after 20s
+  setTimeout(() => {
+    if (document.getElementById('upgrade-trigger-banner') === el) {
+      el.style.opacity = '0';
+      el.style.transition = 'opacity 0.5s';
+      setTimeout(() => el.remove(), 500);
+    }
+  }, 20000);
+}
+
+function showUpgradeModal(trigger) {
+  CVT.activeTrigger = trigger;
+  const plan = PLAN_DETAILS[trigger.suggestedPlan] || PLAN_DETAILS.starter;
+  openModal(`
+    <div class="p-6">
+      <!-- Header -->
+      <div class="text-center mb-5">
+        <div class="w-14 h-14 bg-violet-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+          <i class="fas fa-rocket text-violet-600 text-xl"></i>
+        </div>
+        <h2 class="text-xl font-bold text-gray-800">${esc(trigger.headline)}</h2>
+        <p class="text-sm text-gray-500 mt-1 max-w-sm mx-auto">${esc(trigger.body)}</p>
+      </div>
+
+      <!-- Plan highlight -->
+      <div class="bg-gradient-to-br from-violet-600 to-purple-700 rounded-2xl p-5 text-white mb-4">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <div class="text-lg font-extrabold">${plan.name} Plan</div>
+            <div class="text-violet-200 text-sm">${plan.tokens} · ${plan.daily}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-3xl font-extrabold">$${plan.price}</div>
+            <div class="text-violet-200 text-xs">/month</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          ${(trigger.benefits||[]).slice(0,4).map(b=>`
+            <div class="flex items-center gap-1.5">
+              <i class="fas fa-check-circle text-emerald-300 text-xs shrink-0"></i>
+              <span class="text-white/90">${esc(b)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- CTA -->
+      <button onclick="clickUpgradeCTA('${trigger.id}','${trigger.suggestedPlan}')"
+        class="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 rounded-xl text-sm transition-colors mb-3">
+        <i class="fas fa-arrow-circle-up mr-2"></i>${esc(trigger.cta)}
+      </button>
+      <button onclick="dismissTrigger('${trigger.id}')"
+        class="w-full bg-gray-100 hover:bg-gray-200 text-gray-600 font-medium py-2.5 rounded-xl text-sm transition-colors">
+        Maybe later
+      </button>
+
+      <p class="text-center text-xs text-gray-400 mt-3">
+        <i class="fas fa-lock mr-1"></i>Secure billing · Cancel anytime
+      </p>
+    </div>
+  `);
+}
+
+function openUpgradeModal(triggerId) {
+  if (CVT.activeTrigger) {
+    recordTriggerClick(triggerId);
+    showUpgradeModal(CVT.activeTrigger);
+  }
+}
+window.openUpgradeModal = openUpgradeModal;
+
+// dismissTrigger, clickTriggerCTA defined below in CONVERSION ENGINE section
+// clickUpgradeCTA wraps clickTriggerCTA for backward compatibility
+function clickUpgradeCTA(triggerId, plan) {
+  api.post('/upgrade/action', { triggerId, action: 'clicked' }).catch(()=>{});
+  toast(`Opening ${plan} plan details...`, 'info');
+  setTimeout(() => {
+    closeModal({target: document.getElementById('modal')});
+    nav('usage');
+  }, 800);
+}
+window.clickUpgradeCTA = clickUpgradeCTA;
+
+function recordTriggerClick(triggerId) {
+  api.post('/upgrade/action', { triggerId, action: 'clicked' }).catch(()=>{});
+}
+
+// ================================================================
+// FEATURE LOCK UI — Called when user hits a locked feature
+// ================================================================
+function renderLockedFeatureCard(featureKey) {
+  const f = LOCKED_FEATURE_CARDS[featureKey];
+  if (!f) return '';
+
+  // Log the hit
+  logBehaviorEvent('feature_locked_hit', { featureKey });
+  // Check for trigger (async)
+  api.post('/upgrade/feature-lock', {
+    featureKey,
+    planName: S.tokens?.planName || 'free'
+  }).then(r => {
+    if (r.success && r.data?.shouldShow && r.data?.trigger) {
+      scheduleTrigger(r.data.trigger);
+    }
+  }).catch(()=>{});
+
+  return `
+    <div class="relative overflow-hidden bg-white rounded-2xl border-2 border-dashed border-gray-200 p-6 text-center">
+      <!-- Blurred preview overlay -->
+      <div class="absolute inset-0 bg-white/70 backdrop-blur-sm z-10 flex flex-col items-center justify-center p-6 rounded-2xl">
+        <div class="w-12 h-12 bg-${f.color}-100 rounded-2xl flex items-center justify-center mb-3">
+          <i class="fas fa-lock text-${f.color}-500 text-lg"></i>
+        </div>
+        <h3 class="font-bold text-gray-800 text-base mb-1">${esc(f.name)}</h3>
+        <p class="text-sm text-gray-500 mb-1 max-w-xs">${esc(f.description)}</p>
+        <p class="text-xs text-${f.color}-600 font-medium mb-4"><i class="fas fa-star mr-1"></i>${esc(f.benefit)}</p>
+        <button onclick="triggerFeatureLock('${featureKey}')"
+          class="bg-${f.color}-600 hover:bg-${f.color}-700 text-white font-bold px-5 py-2 rounded-xl text-sm transition-colors">
+          Unlock for ${f.price} →
+        </button>
+      </div>
+      <!-- Background preview (blurred) -->
+      <div class="blur-sm opacity-40 pointer-events-none select-none">
+        <div class="text-4xl mb-2"><i class="fas ${f.icon} text-${f.color}-300"></i></div>
+        <p class="text-sm text-gray-400">${esc(f.previewText)}</p>
+        <div class="mt-3 space-y-1.5">
+          ${[1,2,3].map(()=>`<div class="h-3 bg-gray-200 rounded-full w-${Math.floor(Math.random()*4+6)*10}% mx-auto"></div>`).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function triggerFeatureLock(featureKey) {
+  api.post('/upgrade/feature-lock', {
+    featureKey,
+    planName: S.tokens?.planName || 'free'
+  }).then(r => {
+    if (r.success && r.data?.trigger) {
+      showUpgradeModal(r.data.trigger);
+    }
+  }).catch(()=>{});
+}
+window.triggerFeatureLock = triggerFeatureLock;
+window.renderLockedFeatureCard = renderLockedFeatureCard;
+
+// ================================================================
+// VALUE MOMENT — After high-value intent generated
+// ================================================================
+async function checkValueMoment(intentType) {
+  const planName = S.tokens?.planName || 'free';
+  if (['pro','scale'].includes(planName)) return;  // Don't nudge pro/scale
+
+  try {
+    const r = await api.post('/upgrade/intent-value', { intentType, planName });
+    if (r.success && r.data?.shouldShow && r.data?.trigger) {
+      scheduleTrigger(r.data.trigger);
+    }
+    // Show value badge on high-value intents
+    if (r.data?.isHighValue) {
+      toast('💡 High-value insight generated! Review it carefully.', 'info');
+    }
+  } catch(_) {}
+}
+
+// ================================================================
+// TOKEN MILESTONE DISPLAY — Progress bar in main content areas
+// ================================================================
+function renderTokenProgressBar(tokens, options = {}) {
+  const t = tokens || S.tokens;
+  if (!t) return '';
+  const pct = t.percentage || Math.round((t.tokensUsed / t.tokensGranted) * 100) || 0;
+  const daily_pct = Math.round(((t.dailyUsed||0) / (t.dailyLimit||2000)) * 100);
+  const { compact = false, showDaily = false } = options;
+
+  const barColor = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : pct >= 50 ? 'bg-yellow-400' : 'bg-emerald-500';
+  const textColor = pct >= 100 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-emerald-600';
+
+  if (compact) {
+    return `
+      <div class="flex items-center gap-2">
+        <div class="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+          <div class="${barColor} h-full rounded-full transition-all" style="width:${pct}%"></div>
+        </div>
+        <span class="text-xs ${textColor} font-medium shrink-0">${pct}%</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-1.5">
+          <i class="fas fa-coins text-violet-500 text-xs"></i>
+          <span class="text-xs font-semibold text-gray-700">AI Tokens — ${(t.displayName||t.planName||'Free').toUpperCase()} Plan</span>
+        </div>
+        <span class="text-xs ${textColor} font-bold">${(t.tokensRemaining||0).toLocaleString()} left</span>
+      </div>
+      <div class="h-2 bg-gray-100 rounded-full overflow-hidden mb-1.5">
+        <div class="${barColor} h-full rounded-full transition-all duration-700" style="width:${pct}%"></div>
+      </div>
+      <div class="flex justify-between text-[10px] text-gray-400">
+        <span>${(t.tokensUsed||0).toLocaleString()} used of ${(t.tokensGranted||10000).toLocaleString()}</span>
+        <span>${pct}% used</span>
+      </div>
+      ${pct >= 80 ? `
+        <div class="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between">
+          <span class="text-xs ${textColor} font-medium">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            ${pct >= 100 ? 'Limit reached' : `${pct}% used — consider upgrading`}
+          </span>
+          <button onclick="nav('usage')" class="text-xs text-violet-600 font-semibold hover:text-violet-800 transition-colors">
+            View Plans →
+          </button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// ================================================================
+// CONTEXTUAL UPGRADE CTA — shown in context, not spammy
+// ================================================================
+function renderUpgradeCTA(context = 'general') {
+  const t = S.tokens;
+  if (!t) return '';
+  const planName = t.planName || 'free';
+  if (['pro','scale'].includes(planName)) return '';  // Already on good plan
+
+  const nextPlan = planName === 'free' ? 'Starter' : 'Pro';
+  const price = planName === 'free' ? '$10/mo' : '$30/mo';
+  const pct = t.percentage || 0;
+
+  // Only show if relevant
+  const ctaContexts = {
+    schedule: { show: !t.hasScheduling, headline: 'Unlock Scheduling', body: `Run agents automatically with ${nextPlan}` },
+    analytics: { show: !t.hasAnalytics, headline: 'Unlock Analytics', body: `Deep business insights with ${nextPlan}` },
+    token_warning: { show: pct >= 70, headline: 'More AI Power', body: `${pct}% used — upgrade to ${nextPlan} for more` },
+    general: { show: planName === 'free', headline: 'Upgrade to Starter', body: 'Unlock scheduling, analytics & 120× more tokens' }
+  };
+
+  const cfg = ctaContexts[context] || ctaContexts.general;
+  if (!cfg.show) return '';
+
+  return `
+    <div class="bg-gradient-to-r from-violet-50 to-purple-50 border border-violet-200 rounded-xl p-3 flex items-center gap-3">
+      <div class="w-8 h-8 bg-violet-100 rounded-lg flex items-center justify-center shrink-0">
+        <i class="fas fa-rocket text-violet-600 text-xs"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-xs font-bold text-violet-800">${cfg.headline}</div>
+        <div class="text-xs text-violet-600">${cfg.body}</div>
+      </div>
+      <button onclick="nav('usage')" class="bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shrink-0">
+        ${price} →
+      </button>
+    </div>
+  `;
+}
+
+// ================================================================
+// BEHAVIOR LOGGING — batched, fire-and-forget
+// ================================================================
+function logBehaviorEvent(eventType, data = {}) {
+  CVT.behaviorBuffer.push({ eventType, data, ts: Date.now() });
+  // Debounce: send after 3s idle
+  clearTimeout(CVT._behaviorTimer);
+  CVT._behaviorTimer = setTimeout(flushBehaviorBuffer, 3000);
+}
+
+async function flushBehaviorBuffer() {
+  if (!CVT.behaviorBuffer.length) return;
+  const events = CVT.behaviorBuffer.splice(0);
+  for (const ev of events) {
+    api.post('/upgrade/behavior', { eventType: ev.eventType, eventData: ev.data }).catch(()=>{});
+  }
+}
+
+// ================================================================
 // INITIALIZATION
 // ================================================================
 async function init() {
@@ -1858,10 +2384,18 @@ async function init() {
   // Init chat bubble
   initChatBubble();
 
-  // Poll every 60s for new scheduled intents
+  // ── Conversion: check for upgrade trigger after 3s (non-blocking) ─
+  setTimeout(() => checkUpgradeTrigger('dashboard'), 3000);
+
+  // ── Log daily active behavior ──────────────────────────────────────
+  logBehaviorEvent('daily_active', { page: 'today', planName: S.tokens?.planName || 'free' });
+
+  // Poll every 60s for new scheduled intents + token refresh
   setInterval(async () => {
     await refreshStats();
     await loadTokenStatus();
+    // Re-check triggers periodically (won't fire if within cooldown)
+    checkUpgradeTrigger('poll');
   }, 60000);
 }
 
@@ -2391,6 +2925,347 @@ function addChatMsg(role, content, id) {
   el.innerHTML = content;
   msgs.appendChild(el);
   msgs.scrollTop = msgs.scrollHeight;
+}
+
+// ================================================================
+// CONVERSION ENGINE — Frontend
+// Behavioral trigger detection, upgrade prompts as intents,
+// locked feature cards, contextual CTAs, A/B variants.
+// Rule: helpful, not pushy. Max 1 trigger per page load.
+// ================================================================
+
+// ── Conversion state ──────────────────────────────────────────────
+const Conv = {
+  lastTrigger: null,        // Most recent trigger object
+  triggerShownAt: 0,        // Timestamp of last trigger shown
+  triggerCooldownMs: 5 * 60 * 1000,  // 5 min between showing triggers
+  sessionUpgradeSeen: false, // Track if upgrade was shown this session
+  chatUpgradeMentioned: false // Track if chat mentioned upgrade
+};
+
+// ── Trigger urgency → style maps ─────────────────────────────────
+const URGENCY_STYLE = {
+  low:      { bg:'bg-violet-50',  border:'border-violet-200', icon:'fa-lightbulb',         iconColor:'text-violet-500', ctaBg:'bg-violet-600 hover:bg-violet-700' },
+  medium:   { bg:'bg-amber-50',   border:'border-amber-200',  icon:'fa-arrow-circle-up',   iconColor:'text-amber-500',  ctaBg:'bg-amber-500 hover:bg-amber-600' },
+  high:     { bg:'bg-orange-50',  border:'border-orange-200', icon:'fa-exclamation-circle', iconColor:'text-orange-500', ctaBg:'bg-orange-500 hover:bg-orange-600' },
+  critical: { bg:'bg-red-50',     border:'border-red-200',    icon:'fa-times-circle',      iconColor:'text-red-500',    ctaBg:'bg-red-600 hover:bg-red-700' }
+};
+
+// ── Locked feature config (mirrors backend) ───────────────────────
+const LOCKED_FEATURES_UI = {
+  scheduling:      { name:'Automated Scheduling', icon:'fa-calendar-alt', color:'violet', requiredPlan:'starter', preview:'Set agents to run daily/weekly — no manual triggers needed', benefit:'Saves 2-3 hrs/week' },
+  market_research: { name:'Market Research Agent', icon:'fa-chart-line', color:'blue', requiredPlan:'starter', preview:'Competitor pricing, trend signals, opportunity detection', benefit:'Avg +18% margin improvement' },
+  advanced_agents: { name:'Advanced AI Agents', icon:'fa-robot', color:'purple', requiredPlan:'pro', preview:'Strategy + Ad Optimization + Customer Segmentation agents', benefit:'Full 7-agent intelligence suite' },
+  analytics:       { name:'Business Analytics', icon:'fa-chart-bar', color:'emerald', requiredPlan:'starter', preview:'Revenue trends, cohort insights, performance breakdown', benefit:'See exactly what drives growth' },
+  workflows:       { name:'Multi-Step Workflows', icon:'fa-project-diagram', color:'indigo', requiredPlan:'starter', preview:'Chain agents into product launches, marketing sprints, restock cycles', benefit:'End-to-end guided execution' }
+};
+
+// ================================================================
+// TRIGGER BANNER — Inline, non-modal, dismissible
+// ================================================================
+function showTriggerBanner(trigger) {
+  if (!trigger) return;
+
+  // Anti-spam: don't show if shown recently
+  const now = Date.now();
+  if (now - Conv.triggerShownAt < Conv.triggerCooldownMs) return;
+
+  // Don't show low urgency on critical pages (already dealing with limit)
+  if (trigger.urgency === 'low' && (S.tokens?.percentage ?? 0) >= 95) return;
+
+  Conv.lastTrigger = trigger;
+  Conv.triggerShownAt = now;
+  Conv.sessionUpgradeSeen = true;
+
+  const style = URGENCY_STYLE[trigger.urgency] || URGENCY_STYLE.medium;
+
+  // Create banner element
+  let banner = document.getElementById('upgrade-trigger-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'upgrade-trigger-banner';
+    banner.style.cssText = 'animation:slideUp 0.3s ease;';
+
+    // Insert after page-header if on today page, else top of content
+    const content = document.getElementById('content');
+    if (content?.firstElementChild) {
+      content.insertBefore(banner, content.firstElementChild.nextSibling);
+    }
+  }
+
+  const priceText = trigger.suggestedPlanPrice > 0
+    ? `$${trigger.suggestedPlanPrice}/mo`
+    : 'Free';
+  const planName = trigger.suggestedPlan
+    ? trigger.suggestedPlan.charAt(0).toUpperCase() + trigger.suggestedPlan.slice(1)
+    : 'Starter';
+
+  banner.className = `${style.bg} border ${style.border} rounded-2xl p-4 mb-4 flex gap-3 items-start`;
+  banner.innerHTML = `
+    <div class="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${style.bg}">
+      <i class="fas ${style.icon} ${style.iconColor}"></i>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="font-semibold text-gray-800 text-sm">${esc(trigger.headline)}</div>
+      <div class="text-xs text-gray-600 mt-0.5 leading-relaxed">${esc(trigger.body)}</div>
+      ${trigger.benefits?.length > 0 ? `
+        <div class="flex flex-wrap gap-1.5 mt-2">
+          ${trigger.benefits.slice(0,3).map(b=>`<span class="text-[10px] bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-full">${esc(b)}</span>`).join('')}
+        </div>
+      ` : ''}
+    </div>
+    <div class="flex gap-2 items-center shrink-0">
+      <button onclick="clickTriggerCTA('${trigger.id}')"
+        class="${style.ctaBg} text-white text-xs font-bold px-3 py-2 rounded-xl transition-colors whitespace-nowrap">
+        ${esc(trigger.cta)} · ${priceText}
+      </button>
+      <button onclick="dismissTrigger('${trigger.id}')"
+        class="w-6 h-6 rounded-lg bg-white/60 hover:bg-white text-gray-400 hover:text-gray-600 flex items-center justify-center transition-colors text-xs"
+        title="Dismiss">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+  `;
+}
+window.showTriggerBanner = showTriggerBanner;
+
+function dismissTrigger(triggerId) {
+  const banner = document.getElementById('upgrade-trigger-banner');
+  if (banner) {
+    banner.style.opacity = '0';
+    banner.style.transform = 'translateY(-8px)';
+    banner.style.transition = 'all 0.25s';
+    setTimeout(() => banner.remove(), 250);
+  }
+  // Log dismissal
+  api.post('/upgrade/action', { triggerId, action: 'dismissed' }).catch(() => {});
+}
+window.dismissTrigger = dismissTrigger;
+
+function clickTriggerCTA(triggerId) {
+  // Log the click
+  api.post('/upgrade/action', { triggerId, action: 'clicked' }).catch(() => {});
+  // Navigate to usage/plans page
+  nav('usage');
+  dismissTrigger(triggerId);
+}
+window.clickTriggerCTA = clickTriggerCTA;
+
+// ================================================================
+// INLINE USAGE PROGRESS BAR (in dashboard + today views)
+// ================================================================
+function renderInlineUsageBar(containerId) {
+  const t = S.tokens;
+  if (!t) return '';
+  const pct = t.percentage || Math.round(((t.tokensUsed||0) / (t.tokensGranted||10000)) * 100);
+  const dailyPct = t.dailyPercentage || Math.round(((t.dailyUsed||0) / (t.dailyLimit||2000)) * 100);
+  const barColor = pct>=90?'bg-red-500':pct>=70?'bg-amber-500':'bg-emerald-500';
+  const planName = t.planName || 'free';
+  const isFree = planName === 'free';
+
+  return `
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-coins text-violet-400 text-xs"></i>
+          <span class="text-xs font-semibold text-gray-700">AI Token Usage</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-bold uppercase ${
+            planName==='pro'?'text-violet-600 bg-violet-50':
+            planName==='starter'?'text-blue-600 bg-blue-50':
+            planName==='scale'?'text-emerald-600 bg-emerald-50':
+            'text-gray-500 bg-gray-100'
+          } px-2 py-0.5 rounded-full border border-current/20">${t.displayName || planName.charAt(0).toUpperCase()+planName.slice(1)}</span>
+          <button onclick="nav('usage')" class="text-[10px] text-violet-500 hover:text-violet-700 font-medium">Details →</button>
+        </div>
+      </div>
+      <div class="h-2 bg-gray-100 rounded-full overflow-hidden mb-1">
+        <div class="${barColor} h-full rounded-full transition-all duration-700" style="width:${pct}%"></div>
+      </div>
+      <div class="flex justify-between text-[10px] text-gray-400">
+        <span>${(t.tokensUsed||0).toLocaleString()} used</span>
+        <span>${(t.tokensRemaining||0).toLocaleString()} remaining (${100-pct}%)</span>
+      </div>
+      ${pct >= 80 && isFree ? `
+        <div class="mt-2 flex items-center justify-between bg-amber-50 rounded-xl px-3 py-2">
+          <span class="text-xs text-amber-700 font-medium">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            ${pct>=100?'Token limit reached':'Running low on tokens'}
+          </span>
+          <button onclick="nav('usage')" class="text-[10px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-2.5 py-1 rounded-lg transition-colors">
+            Upgrade Plan
+          </button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// ================================================================
+// LOCKED FEATURE CARD — Shows blurred preview + benefit + CTA
+// ================================================================
+function lockedFeatureCard(featureKey, opts = {}) {
+  const feat = LOCKED_FEATURES_UI[featureKey];
+  if (!feat) return '';
+
+  const planName = S.tokens?.planName || 'free';
+  const planHier = ['free','starter','pro','scale'];
+  const currentLevel = planHier.indexOf(planName);
+  const requiredLevel = planHier.indexOf(feat.requiredPlan);
+  if (currentLevel >= requiredLevel) return ''; // Already unlocked
+
+  const planLabel = feat.requiredPlan.charAt(0).toUpperCase() + feat.requiredPlan.slice(1);
+  const price = feat.requiredPlan === 'starter' ? '$10/mo' : feat.requiredPlan === 'pro' ? '$30/mo' : '$100/mo';
+
+  return `
+    <div class="relative rounded-2xl border-2 border-dashed border-${feat.color}-200 bg-${feat.color}-50/30 overflow-hidden" ${opts.compact ? 'style="min-height:80px"' : 'style="min-height:120px"'}>
+      <!-- Blurred preview content -->
+      <div class="p-4 filter blur-[2px] pointer-events-none select-none opacity-40">
+        <div class="h-3 bg-${feat.color}-200 rounded w-3/4 mb-2"></div>
+        <div class="h-2 bg-${feat.color}-100 rounded w-full mb-1.5"></div>
+        <div class="h-2 bg-${feat.color}-100 rounded w-5/6"></div>
+      </div>
+      <!-- Overlay -->
+      <div class="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+        <div class="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center mb-2">
+          <i class="fas ${feat.icon} text-${feat.color}-500 text-base"></i>
+        </div>
+        <div class="font-bold text-gray-800 text-sm mb-0.5">${feat.name}</div>
+        <div class="text-xs text-gray-500 mb-1">${feat.preview}</div>
+        <div class="text-[10px] text-${feat.color}-600 font-semibold mb-2">✨ ${feat.benefit}</div>
+        <button onclick="triggerFeatureLock('${featureKey}')"
+          class="bg-white border border-${feat.color}-300 text-${feat.color}-700 text-[11px] font-bold px-3 py-1.5 rounded-xl hover:bg-${feat.color}-50 transition-colors shadow-sm">
+          <i class="fas fa-lock-open mr-1"></i>Unlock with ${planLabel} · ${price}
+        </button>
+      </div>
+    </div>
+  `;
+}
+window.lockedFeatureCard = lockedFeatureCard;
+
+async function triggerFeatureLock(featureKey) {
+  const planName = S.tokens?.planName || 'free';
+  try {
+    const r = await api.post('/upgrade/feature-lock', { featureKey, planName });
+    if (r.success && r.data?.shouldShow && r.data?.trigger) {
+      showFeatureLockModal(r.data.trigger, r.data.featureData);
+    } else {
+      // Fallback: just go to usage page
+      nav('usage');
+    }
+  } catch(_) {
+    nav('usage');
+  }
+}
+window.triggerFeatureLock = triggerFeatureLock;
+
+function showFeatureLockModal(trigger, featureData) {
+  if (!trigger) return;
+  const style = URGENCY_STYLE[trigger.urgency] || URGENCY_STYLE.medium;
+  const planLabel = trigger.suggestedPlan?.charAt(0).toUpperCase() + (trigger.suggestedPlan?.slice(1) ?? '');
+  const price = trigger.suggestedPlanPrice > 0 ? `$${trigger.suggestedPlanPrice}/mo` : 'Free';
+
+  openModal(`
+    <div class="p-6">
+      <div class="text-center mb-5">
+        <div class="w-14 h-14 rounded-2xl ${style.bg} flex items-center justify-center mx-auto mb-3">
+          <i class="fas ${featureData?.icon || 'fa-lock-open'} ${style.iconColor} text-2xl"></i>
+        </div>
+        <h2 class="text-lg font-bold text-gray-800">${esc(trigger.headline)}</h2>
+        <p class="text-sm text-gray-500 mt-1">${esc(trigger.body)}</p>
+      </div>
+
+      <!-- Benefits list -->
+      <div class="bg-gray-50 rounded-xl p-4 mb-5">
+        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">What you unlock on ${planLabel}</div>
+        <ul class="space-y-1.5">
+          ${(trigger.benefits || []).map(b=>`
+            <li class="flex items-center gap-2 text-sm text-gray-700">
+              <i class="fas fa-check-circle text-emerald-500 text-xs shrink-0"></i>
+              ${esc(b)}
+            </li>
+          `).join('')}
+        </ul>
+      </div>
+
+      <!-- Preview text -->
+      ${featureData?.previewText ? `
+        <div class="${style.bg} border ${style.border} rounded-xl p-3 mb-5 text-xs text-gray-600 italic">
+          <i class="fas fa-eye mr-1.5 ${style.iconColor}"></i>"${esc(featureData.previewText)}"
+        </div>
+      ` : ''}
+
+      <div class="flex gap-3">
+        <button onclick="clickTriggerCTA('${trigger.id}'); closeModal()"
+          class="flex-1 ${style.ctaBg} text-white font-bold py-3 rounded-xl transition-colors text-sm">
+          <i class="fas fa-arrow-circle-up mr-1.5"></i>${esc(trigger.cta)} · ${price}
+        </button>
+        <button onclick="dismissTrigger('${trigger.id}'); closeModal()"
+          class="px-4 py-3 rounded-xl bg-gray-100 text-gray-500 text-sm font-medium hover:bg-gray-200 transition-colors">
+          Not now
+        </button>
+      </div>
+      <p class="text-[10px] text-gray-400 text-center mt-3">Cancel anytime. No contracts.</p>
+    </div>
+  `);
+}
+
+// ================================================================
+// CONTEXTUAL UPGRADE CTA (inline, appears in relevant sections)
+// ================================================================
+function upgradeCTA(context = 'default') {
+  const t = S.tokens;
+  const planName = t?.planName || 'free';
+  if (['pro','scale'].includes(planName)) return ''; // No CTA for high-tier users
+  if (Conv.sessionUpgradeSeen && context === 'soft') return ''; // Don't repeat soft CTAs
+
+  const ctaConfig = {
+    schedules: { icon:'fa-calendar-alt', text:'Automate this with Starter', sub:'Set recurring AI analysis — hands-free', plan:'Starter', price:'$10' },
+    agents:    { icon:'fa-robot',       text:'Unlock all 7 agents with Pro',  sub:'Strategy, Ad Optimization + more', plan:'Pro', price:'$30' },
+    dashboard: { icon:'fa-arrow-up',    text:'Upgrade for more AI power',    sub:'1.2M tokens/mo on Starter', plan:'Starter', price:'$10' },
+    default:   { icon:'fa-arrow-circle-up', text:'Upgrade your plan',        sub:'More tokens, more agents, automation', plan:'Starter', price:'$10' }
+  };
+  const cfg = ctaConfig[context] || ctaConfig.default;
+
+  return `
+    <div class="border border-violet-200 bg-violet-50 rounded-xl p-3 flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center shrink-0">
+        <i class="fas ${cfg.icon} text-violet-600 text-sm"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-xs font-semibold text-violet-800">${cfg.text}</div>
+        <div class="text-[10px] text-violet-600">${cfg.sub}</div>
+      </div>
+      <button onclick="nav('usage')" class="bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap">
+        ${cfg.plan} · ${cfg.price}/mo
+      </button>
+    </div>
+  `;
+}
+
+// ================================================================
+// TRIGGER CHECKER — Run after page loads (non-blocking)
+// ================================================================
+async function checkUpgradeTriggers() {
+  try {
+    const r = await api.get('/upgrade/check');
+    if (r.success && r.data?.shouldShow && r.data?.trigger) {
+      showTriggerBanner(r.data.trigger);
+    }
+  } catch(_) {} // Never block the UI
+}
+
+// Call after intent generation to check value_moment
+async function checkValueMoment(intentType) {
+  try {
+    const planName = S.tokens?.planName || 'free';
+    const r = await api.post('/upgrade/intent-value', { intentType, planName });
+    if (r.success && r.data?.shouldShow && r.data?.trigger) {
+      // Small delay so intent renders first
+      setTimeout(() => showTriggerBanner(r.data.trigger), 1500);
+    }
+  } catch(_) {}
 }
 
 // ================================================================

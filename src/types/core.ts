@@ -31,6 +31,7 @@ export type IntentType =
   | 'ad_optimization'
   | 'financial_insight'
   | 'strategy_review'
+  | 'upgrade_suggestion'
 
 export type RiskLevel     = 'low' | 'medium' | 'high'
 export type Priority      = 'low' | 'medium' | 'high' | 'urgent'

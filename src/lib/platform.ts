@@ -413,13 +413,42 @@ async function checkAndDeductTokens(
     // Set cooldown for next request
     await setCooldown(userId, requestType, planName, db)
 
+    // ── Token milestone detection (async, non-blocking) ───────────
+    // Compute pct AFTER deduction to trigger at the crossing point
+    const newUsed = ledger.tokens_used + platformTokenCost
+    const newPct = Math.round((newUsed / ledger.tokens_granted) * 100)
+    const prevPct = Math.round((ledger.tokens_used / ledger.tokens_granted) * 100)
+    const crossed50 = prevPct < 50 && newPct >= 50
+    const crossed80 = prevPct < 80 && newPct >= 80
+
+    // Fire milestones for free (50%/80%) and starter/pro (80%) users
+    const shouldFireMilestone = (crossed50 && planName === 'free') ||
+      (crossed80 && ['free', 'starter', 'pro'].includes(planName))
+    if (shouldFireMilestone) {
+      const milestoneType = crossed80 ? 'token_80' : 'token_50'
+      const suggestedPlan = planName === 'free' ? 'starter' : planName === 'starter' ? 'pro' : 'scale'
+      const urgency = crossed80 ? 'high' : 'low'
+      // Fire-and-forget: log milestone event for frontend to pick up
+      db.prepare(`
+        INSERT OR IGNORE INTO upgrade_trigger_events
+          (id, user_id, trigger_type, trigger_data, plan_name, suggested_plan, urgency, ab_variant)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        genId('tm'), userId, milestoneType,
+        JSON.stringify({ pct: newPct, tokens_used: newUsed }),
+        planName, suggestedPlan, urgency,
+        userId.charCodeAt(0) % 2 === 0 ? 'A' : 'B'
+      ).run().catch(() => {/* silent */})
+    }
+
     return {
       allowed: true,
       tokensUsed: platformTokenCost,
       tokensRemaining: Math.max(0, monthlyRemaining - platformTokenCost),
       dailyRemaining: Math.max(0, dailyRemaining - platformTokenCost),
-      costUsd: 0, modelUsed: 'pending', planName
-    }
+      costUsd: 0, modelUsed: 'pending', planName,
+      tokenPct: newPct   // Return current pct for frontend milestone display
+    } as TokenUsageResult & { tokenPct?: number }
   } catch (err) {
     console.error('[PlatformAI] Token check error:', err)
     return { allowed: true, tokensUsed: platformTokenCost, tokensRemaining: -1, costUsd: 0, modelUsed: 'unknown', planName: 'unknown' }
@@ -848,4 +877,24 @@ function buildDeniedResult(req: AIRequest, reason?: string): TokenUsageResult {
     tokensUsed: 0, tokensRemaining: 0, costUsd: 0,
     modelUsed: 'blocked', planName: 'unknown'
   }
+}
+
+// ================================================================
+// TOKEN MILESTONE DETECTION
+// Returns which milestone bracket the user just crossed (if any).
+// Called after token deduction so the frontend can fire a trigger.
+// ================================================================
+export function detectTokenMilestone(
+  usedBefore: number,
+  usedAfter: number,
+  granted: number
+): 'token_50' | 'token_80' | 'token_100' | null {
+  if (granted === 0) return null
+  const pctBefore = (usedBefore / granted) * 100
+  const pctAfter  = (usedAfter  / granted) * 100
+
+  if (pctBefore < 100 && pctAfter >= 100) return 'token_100'
+  if (pctBefore < 80  && pctAfter >= 80)  return 'token_80'
+  if (pctBefore < 50  && pctAfter >= 50)  return 'token_50'
+  return null
 }

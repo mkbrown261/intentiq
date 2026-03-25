@@ -12,6 +12,7 @@ import {
   AgentStore, AgentLogStore, getDashboardStats, genId
 } from '../lib/store'
 import { callPlatformAI } from '../lib/platform'
+import { logBehavior } from '../lib/conversion'
 
 const router = new Hono<{ Bindings: Env }>()
 
@@ -87,6 +88,15 @@ router.post('/generate', async (c) => {
     })
     HealthStore.recalculate()
 
+    // Log behavior for conversion engine
+    if (c.env?.DB) {
+      await logBehavior(c.env.DB, userId, 'intent_generated', {
+        intentType: body.intentType,
+        agentName,
+        planName: 'unknown'
+      })
+    }
+
     return c.json({
       success: true, data: intent,
       message: '✅ Intent generated. Review and approve before any action is taken.',
@@ -118,6 +128,12 @@ router.patch('/:id', async (c) => {
   ApprovalStore.save(approval)
   HealthStore.recalculate()
 
+  // Log behavior for conversion engine
+  const userId = (c.get('userId') as string) ?? 'user-demo'
+  if (c.env?.DB && body.decision === 'approved') {
+    await logBehavior(c.env.DB, userId, 'intent_approved', { intentType: intent.type })
+  }
+
   const messages: Record<string, string> = {
     approved: '✅ Intent approved. Execute the suggested steps manually when ready.',
     rejected:  '❌ Intent rejected and archived.',
@@ -147,7 +163,8 @@ function resolveAgent(intentType: IntentType): AgentName {
     business_health: 'BusinessHealthAgent', performance_alert: 'BusinessHealthAgent',
     financial_insight: 'BusinessHealthAgent',
     strategy_review: 'StrategyAgent', workflow_suggestion: 'StrategyAgent',
-    ad_optimization: 'StrategyAgent'
+    ad_optimization: 'StrategyAgent',
+    upgrade_suggestion: 'BusinessHealthAgent'
   }
   return map[intentType] ?? 'BusinessHealthAgent'
 }
