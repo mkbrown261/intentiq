@@ -8,7 +8,7 @@
 
 ## 🔗 URLs
 - **Production:** https://intentiq-6mp.pages.dev
-- **Latest Deploy:** https://2bd7cd58.intentiq-6mp.pages.dev
+- **Latest Deploy:** https://a5362b8f.intentiq-6mp.pages.dev
 - **GitHub:** https://github.com/mkbrown261/intentiq
 
 ---
@@ -17,7 +17,7 @@
 
 ### Core Platform
 - **7 AI Agents:** MarketResearch, Pricing, Inventory, EmailMarketing, ProductCreation, BusinessHealth, Strategy
-- **21 Intent Types** across all agents
+- **22 Intent Types** across all agents (incl. `upgrade_suggestion`)
 - **Safe Mode:** Every AI recommendation requires human approval before action
 - **Platform-owned AI:** Users never supply or see API keys
 - **Hono + Cloudflare D1 + Workers** edge deployment
@@ -64,6 +64,8 @@
 - **Trigger banner:** Slides in at top of content area, auto-dismisses after 20s
 - **Upgrade modal:** Full-screen modal with plan highlight, benefits grid, CTA for critical triggers
 - **Feature lock cards:** Blurred preview + lock overlay + unlock CTA for locked features
+- **Locked scheduling card:** Free users on Schedules page see a blurred schedule preview with lock overlay + "Unlock with Starter" CTA
+- **Locked advanced agents card:** Free/Starter users on Agents page see blurred StrategyAgent/AdOptimizer preview + "Unlock with Pro" CTA
 - **Contextual upgrade CTA:** Inline in Schedules, Agents, Dashboard pages
 - **My Usage dashboard:** Monthly + daily bars, plan comparison grid, cost transparency table
 
@@ -177,4 +179,4 @@ npx wrangler pages deploy dist --project-name intentiq
 
 ---
 
-*Last updated: 2026-03-25 · v5.1.0*
+*Last updated: 2026-03-25 · v5.1.0 · commit 9797cdf*
