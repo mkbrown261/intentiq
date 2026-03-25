@@ -23,10 +23,34 @@ const S = {
 
 // ── API ───────────────────────────────────────────────────────────
 const api = {
-  get:   async p => { const r = await fetch('/api'+p); return r.json(); },
-  post:  async (p,b) => { const r = await fetch('/api'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },
-  patch: async (p,b) => { const r = await fetch('/api'+p,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },
-  del:   async p => { const r = await fetch('/api'+p,{method:'DELETE'}); return r.json(); }
+  get: async p => {
+    try {
+      const r = await fetch('/api'+p);
+      if(!r.ok) { console.warn('[API GET]', p, r.status, r.statusText); }
+      return r.json();
+    } catch(err) { console.error('[API GET] Network error:', p, err); throw err; }
+  },
+  post: async (p,b) => {
+    try {
+      const r = await fetch('/api'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+      if(!r.ok) { console.warn('[API POST]', p, r.status, r.statusText); }
+      return r.json();
+    } catch(err) { console.error('[API POST] Network error:', p, err); throw err; }
+  },
+  patch: async (p,b) => {
+    try {
+      const r = await fetch('/api'+p,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+      if(!r.ok) { console.warn('[API PATCH]', p, r.status, r.statusText); }
+      return r.json();
+    } catch(err) { console.error('[API PATCH] Network error:', p, err); throw err; }
+  },
+  del: async p => {
+    try {
+      const r = await fetch('/api'+p,{method:'DELETE'});
+      if(!r.ok) { console.warn('[API DELETE]', p, r.status, r.statusText); }
+      return r.json();
+    } catch(err) { console.error('[API DELETE] Network error:', p, err); throw err; }
+  }
 };
 
 // ── Toast ─────────────────────────────────────────────────────────
@@ -230,7 +254,7 @@ async function renderToday() {
           <div class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></div>
           <span class="text-violet-300 text-xs font-medium">AI COO Active — Safe Mode Enabled</span>
         </div>
-        <h2 class="text-xl font-bold mb-1">Good ${getGreeting()}, ${name.split(' ')[0]}.</h2>
+        <h2 class="text-xl font-bold mb-1">Good ${getGreeting()}, ${esc(name)}.</h2>
         <p class="text-violet-200 text-sm max-w-xl">Your AI agents have been working. Here's what needs your attention today. <strong class="text-white">You approve everything before anything happens.</strong></p>
         <div class="flex gap-2 mt-4 flex-wrap items-end">
           <div class="bg-white/10 rounded-xl px-3 py-2 text-center min-w-[72px]">
@@ -421,18 +445,43 @@ function intentCardHTML(intent, compact=false) {
 }
 
 // ── Quick Decide ──────────────────────────────────────────────────
+const _decidingIds = new Set(); // prevent duplicate approval race
 async function quickDecide(id, decision) {
-  if(decision==='approved' && S.intents.find(i=>i.id===id)?.riskLevel==='high') {
+  if(_decidingIds.has(id)) return; // debounce double-tap
+  const existing = S.intents.find(i=>i.id===id);
+  if(existing && existing.status !== 'pending') {
+    toast('Intent already ' + existing.status, 'info'); return;
+  }
+  if(decision==='approved' && existing?.riskLevel==='high') {
     if(!confirm('This is a HIGH RISK intent. Are you sure you want to approve it?')) return;
   }
-  const r = await api.patch(`/intents/${id}`, {decision});
-  if(r.success) {
-    toast(decision==='approved'?'✅ Intent approved — take action when ready':'❌ Intent rejected', decision==='approved'?'success':'info');
-    const card = document.getElementById(`ic-${id}`);
-    if(card) { card.style.opacity='0'; card.style.transform='translateX(20px)'; card.style.transition='all 0.3s'; setTimeout(()=>card.remove(),300); }
-    await refreshStats();
-    S.intents = S.intents.map(i=>i.id===id?{...i,status:decision,reviewedAt:new Date().toISOString()}:i);
-  } else { toast('Failed to update intent','error'); }
+  _decidingIds.add(id);
+  // Optimistic UI: disable the card's action buttons immediately
+  const card = document.getElementById(`ic-${id}`);
+  if(card) {
+    const btns = card.querySelectorAll('button');
+    btns.forEach(b => { b.disabled = true; b.style.opacity = '0.5'; });
+  }
+  try {
+    const r = await api.patch(`/intents/${id}`, {decision});
+    if(r.success) {
+      toast(decision==='approved'?'✅ Intent approved — take action when ready':'❌ Intent rejected', decision==='approved'?'success':'info');
+      if(card) { card.style.opacity='0'; card.style.transform='translateX(20px)'; card.style.transition='all 0.3s'; setTimeout(()=>card.remove(),300); }
+      await refreshStats();
+      S.intents = S.intents.map(i=>i.id===id?{...i,status:decision,reviewedAt:new Date().toISOString()}:i);
+    } else {
+      console.error('[quickDecide] Failed:', r.error);
+      toast('Failed to update intent: '+(r.error||'Unknown error'),'error');
+      // Re-enable buttons on failure
+      if(card) { const btns = card.querySelectorAll('button'); btns.forEach(b=>{b.disabled=false;b.style.opacity='';});}
+    }
+  } catch(err) {
+    console.error('[quickDecide] Error:', err);
+    toast('Network error — please try again','error');
+    if(card) { const btns = card.querySelectorAll('button'); btns.forEach(b=>{b.disabled=false;b.style.opacity='';});}
+  } finally {
+    _decidingIds.delete(id);
+  }
 }
 window.quickDecide = quickDecide;
 
@@ -442,10 +491,15 @@ async function batchApprove(riskLevel='low') {
   if(!confirm(`Approve all ${targets.length} pending ${riskLevel}-risk intents?`)) return;
   let count = 0;
   for(const i of targets) {
-    const r = await api.patch(`/intents/${i.id}`,{decision:'approved'});
-    if(r.success) count++;
+    try {
+      const r = await api.patch(`/intents/${i.id}`,{decision:'approved'});
+      if(r.success) {
+        count++;
+        S.intents = S.intents.map(x=>x.id===i.id?{...x,status:'approved',reviewedAt:new Date().toISOString()}:x);
+      }
+    } catch(err) { console.error('[batchApprove] Error on intent', i.id, err); }
   }
-  toast(`✅ ${count} intents approved`,'success');
+  toast(`✅ ${count} intent${count!==1?'s':''} approved`,'success');
   if(S.page==='today') renderToday();
   else if(S.page==='intents') renderIntents();
   await refreshStats();
@@ -585,13 +639,13 @@ function intentDetailHTML(i) {
       <!-- Action Buttons -->
       ${isPending ? `
         <div class="flex gap-2 mt-2">
-          <button onclick="quickDecide('${i.id}','approved');closeModal();" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-3 rounded-xl transition-colors text-sm">
+          <button onclick="quickDecide('${i.id}','approved').then(()=>closeModal())" class="flex-1 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-4 py-3 rounded-xl transition-colors text-sm">
             <i class="fas fa-check mr-2"></i>Approve
           </button>
-          <button onclick="closeModal();openModify('${i.id}');" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-3 rounded-xl transition-colors text-sm">
+          <button onclick="closeModal();setTimeout(()=>openModify('${i.id}'),50);" class="flex-1 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-4 py-3 rounded-xl transition-colors text-sm">
             <i class="fas fa-edit mr-2"></i>Modify
           </button>
-          <button onclick="quickDecide('${i.id}','rejected');closeModal();" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-3 rounded-xl transition-colors text-sm">
+          <button onclick="quickDecide('${i.id}','rejected').then(()=>closeModal())" class="flex-1 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold px-4 py-3 rounded-xl transition-colors text-sm">
             <i class="fas fa-times mr-2"></i>Reject
           </button>
         </div>
@@ -628,15 +682,27 @@ window.openModify = openModify;
 async function submitModify(id) {
   const note = document.getElementById('mod-note')?.value?.trim();
   if(!note) { toast('Please add a modification note','warning'); return; }
-  const r = await api.patch(`/intents/${id}`,{decision:'modified',note});
-  if(r.success) {
-    toast('✏️ Intent modified and saved','info');
-    closeModal();
-    S.intents = S.intents.map(i=>i.id===id?{...i,status:'modified',modificationNote:note,reviewedAt:new Date().toISOString()}:i);
-    if(S.page==='today') renderToday();
-    else if(S.page==='intents') renderIntents();
-    await refreshStats();
-  } else { toast('Failed to modify intent','error'); }
+  const btn = document.querySelector(`#modal-box button[onclick="submitModify('${id}')"]`);
+  if(btn) { btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin mr-2"></i>Saving...'; }
+  try {
+    const r = await api.patch(`/intents/${id}`,{decision:'modified',note});
+    if(r.success) {
+      toast('✏️ Intent modified and saved','info');
+      closeModal();
+      S.intents = S.intents.map(i=>i.id===id?{...i,status:'modified',modificationNote:note,reviewedAt:new Date().toISOString()}:i);
+      if(S.page==='today') renderToday();
+      else if(S.page==='intents') renderIntents();
+      await refreshStats();
+    } else {
+      console.error('[submitModify] Failed:', r.error);
+      toast('Failed to modify intent: '+(r.error||'Unknown error'),'error');
+      if(btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-save mr-2"></i>Save Modification'; }
+    }
+  } catch(err) {
+    console.error('[submitModify] Error:', err);
+    toast('Network error — please try again','error');
+    if(btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-save mr-2"></i>Save Modification'; }
+  }
 }
 window.submitModify = submitModify;
 
@@ -803,13 +869,21 @@ async function renderDashboard() {
 
 async function quickGenerate(intentType, agentName) {
   toast('Generating intent...','info');
-  const r = await api.post('/intents/generate',{intentType,agentName});
-  if(r.success) {
-    S.intents.unshift(r.data);
-    toast('✅ New intent generated — check Today\'s Priorities','success');
-    await refreshStats();
-    openIntent(r.data.id);
-  } else { toast('Generation failed','error'); }
+  try {
+    const r = await api.post('/intents/generate',{intentType,agentName});
+    if(r.success) {
+      S.intents.unshift(r.data);
+      toast('✅ New intent generated — check Today\'s Priorities','success');
+      await refreshStats();
+      openIntent(r.data.id);
+    } else {
+      console.error('[quickGenerate] Failed:', r.error);
+      toast('Generation failed: '+(r.error||'Unknown error'),'error');
+    }
+  } catch(err) {
+    console.error('[quickGenerate] Error:', err);
+    toast('Network error — please try again','error');
+  }
 }
 window.quickGenerate = quickGenerate;
 
@@ -964,24 +1038,55 @@ async function renderAgents() {
 }
 
 async function toggleAgent(id, active) {
-  const r = await api.patch(`/agents/${id}`,{isActive:active});
-  if(r.success) { toast(`Agent ${active?'enabled':'paused'}`,'info'); renderAgents(); }
+  try {
+    const r = await api.patch(`/agents/${id}`,{isActive:active});
+    if(r.success) {
+      // Update local state immediately for snappy UI
+      S.agents = S.agents.map(a=>a.id===id?{...a,isActive:active}:a);
+      toast(`Agent ${active?'enabled':'paused'}`,'info');
+      renderAgents();
+    } else {
+      console.error('[toggleAgent] Failed:', r.error);
+      toast('Failed to update agent','error');
+    }
+  } catch(err) {
+    console.error('[toggleAgent] Error:', err);
+    toast('Network error — please try again','error');
+  }
 }
 window.toggleAgent = toggleAgent;
 
+const _generatingAgents = new Set();
 async function generateFromAgent(agentId) {
   const agent = S.agents.find(a=>a.id===agentId);
   if(!agent||!agent.isActive) { toast('This agent is paused','warning'); return; }
+  if(_generatingAgents.has(agentId)) { toast('Already generating...','info'); return; }
+  _generatingAgents.add(agentId);
+  // Visual feedback: find the agent's generate button and show spinner
+  const agentCard = document.querySelector(`[data-agent-id="${agentId}"] .gen-btn`);
+  if(agentCard) { agentCard.disabled=true; agentCard.innerHTML='<div class="spinner w-4 h-4"></div>'; }
   const types = agent.intentTypes;
   const intentType = types[Math.floor(Math.random()*types.length)];
   toast(`${agent.displayName} is analyzing...`,'info');
-  const r = await api.post('/intents/generate',{agentName:agentId,intentType});
-  if(r.success) {
-    S.intents.unshift(r.data);
-    toast(`✅ Intent generated by ${agent.displayName}`,'success');
-    await refreshStats();
-    openIntent(r.data.id);
-  } else { toast('Generation failed: '+r.error,'error'); }
+  try {
+    const r = await api.post('/intents/generate',{agentName:agentId,intentType});
+    if(r.success) {
+      S.intents.unshift(r.data);
+      toast(`✅ Intent generated by ${agent.displayName}`,'success');
+      await refreshStats();
+      openIntent(r.data.id);
+    } else {
+      console.error('[generateFromAgent] Failed:', r.error);
+      toast('Generation failed: '+(r.error||'Unknown error'),'error');
+    }
+  } catch(err) {
+    console.error('[generateFromAgent] Error:', err);
+    toast('Network error — please try again','error');
+  } finally {
+    _generatingAgents.delete(agentId);
+    // Re-render agents to restore button state
+    if(S.page==='agents') renderAgents();
+  }
 }
 window.generateFromAgent = generateFromAgent;
 
@@ -1275,22 +1380,38 @@ async function renderWorkflows() {
   `;
 }
 
+const _runningWorkflowSteps = new Set();
 async function runWorkflowStep(wfId) {
+  if(_runningWorkflowSteps.has(wfId)) { toast('Step already running...','info'); return; }
+  _runningWorkflowSteps.add(wfId);
   toast('Running next workflow step...','info');
-  const r = await api.post(`/workflows/${wfId}/run-step`,{});
-  if(r.success) {
-    toast(r.message||'Step complete!','success');
-    S.workflows = S.workflows.map(w=>w.id===wfId?{...w,progress:r.data.progress,status:r.data.isComplete?'completed':w.status}:w);
-    openIntent(r.data.intent.id);
-    renderWorkflows();
-  } else { toast('Step failed: '+(r.error||'Unknown'),'error'); }
+  try {
+    const r = await api.post(`/workflows/${wfId}/run-step`,{});
+    if(r.success) {
+      toast(r.message||'Step complete!','success');
+      S.workflows = S.workflows.map(w=>w.id===wfId?{...w,progress:r.data?.progress,status:r.data?.isComplete?'completed':w.status}:w);
+      if(r.data?.intent) openIntent(r.data.intent.id);
+      renderWorkflows();
+    } else {
+      console.error('[runWorkflowStep] Failed:', r.error);
+      toast('Step failed: '+(r.error||'Unknown error'),'error');
+    }
+  } catch(err) {
+    console.error('[runWorkflowStep] Error:', err);
+    toast('Network error — please try again','error');
+  } finally {
+    _runningWorkflowSteps.delete(wfId);
+  }
 }
 window.runWorkflowStep = runWorkflowStep;
 
 async function deleteWorkflow(id) {
-  if(!confirm('Delete this workflow?')) return;
-  const r = await api.del(`/workflows/${id}`);
-  if(r.success) { toast('Workflow deleted','info'); renderWorkflows(); }
+  if(!confirm('Delete this workflow? This cannot be undone.')) return;
+  try {
+    const r = await api.del(`/workflows/${id}`);
+    if(r.success) { toast('Workflow deleted','info'); S.workflows = S.workflows.filter(w=>w.id!==id); renderWorkflows(); }
+    else { console.error('[deleteWorkflow] Failed:', r.error); toast('Failed to delete workflow','error'); }
+  } catch(err) { console.error('[deleteWorkflow] Error:', err); toast('Network error','error'); }
 }
 window.deleteWorkflow = deleteWorkflow;
 
@@ -1453,28 +1574,49 @@ async function renderSchedules() {
 
 function formatHour(h) { const ampm = h<12?'AM':'PM'; return (h%12||12)+':00 '+ampm; }
 
+const _runningSchedules = new Set();
 async function runSchedule(id) {
+  if(_runningSchedules.has(id)) { toast('Already running...','info'); return; }
+  _runningSchedules.add(id);
   toast('Running schedule...','info');
-  const r = await api.post(`/schedules/${id}/run`,{});
-  if(r.success) {
-    toast(`✅ Schedule ran! Intent generated for review.`,'success');
-    S.intents.unshift(r.data.intent);
-    openIntent(r.data.intent.id);
-    renderSchedules();
-  } else { toast('Run failed: '+(r.error||'Unknown'),'error'); }
+  try {
+    const r = await api.post(`/schedules/${id}/run`,{});
+    if(r.success) {
+      toast(`✅ Schedule ran! Intent generated for review.`,'success');
+      if(r.data?.intent) {
+        S.intents.unshift(r.data.intent);
+        openIntent(r.data.intent.id);
+      }
+      renderSchedules();
+    } else {
+      console.error('[runSchedule] Failed:', r.error);
+      toast('Run failed: '+(r.error||'Unknown error'),'error');
+    }
+  } catch(err) {
+    console.error('[runSchedule] Error:', err);
+    toast('Network error — please try again','error');
+  } finally {
+    _runningSchedules.delete(id);
+  }
 }
 window.runSchedule = runSchedule;
 
 async function toggleSchedule(id, active) {
-  const r = await api.patch(`/schedules/${id}`,{isActive:active});
-  if(r.success) { toast(`Schedule ${active?'enabled':'paused'}`,'info'); renderSchedules(); }
+  try {
+    const r = await api.patch(`/schedules/${id}`,{isActive:active});
+    if(r.success) { toast(`Schedule ${active?'enabled':'paused'}`,'info'); renderSchedules(); }
+    else { console.error('[toggleSchedule] Failed:', r.error); toast('Failed to update schedule','error'); }
+  } catch(err) { console.error('[toggleSchedule] Error:', err); toast('Network error','error'); }
 }
 window.toggleSchedule = toggleSchedule;
 
 async function deleteSchedule(id) {
-  if(!confirm('Delete this schedule?')) return;
-  const r = await api.del(`/schedules/${id}`);
-  if(r.success) { toast('Schedule deleted','info'); renderSchedules(); }
+  if(!confirm('Delete this schedule? This cannot be undone.')) return;
+  try {
+    const r = await api.del(`/schedules/${id}`);
+    if(r.success) { toast('Schedule deleted','info'); S.schedules = S.schedules.filter(s=>s.id!==id); renderSchedules(); }
+    else { console.error('[deleteSchedule] Failed:', r.error); toast('Failed to delete schedule','error'); }
+  } catch(err) { console.error('[deleteSchedule] Error:', err); toast('Network error','error'); }
 }
 window.deleteSchedule = deleteSchedule;
 
@@ -1698,9 +1840,14 @@ async function renderHealth() {
 
 async function generateHealthIntent() {
   toast('Generating health report...','info');
-  const r = await api.post('/intents/generate',{agentName:'BusinessHealthAgent',intentType:'business_health'});
-  if(r.success) { S.intents.unshift(r.data); toast('✅ Health report generated','success'); openIntent(r.data.id); }
-  else toast('Failed','error');
+  try {
+    const r = await api.post('/intents/generate',{agentName:'BusinessHealthAgent',intentType:'business_health'});
+    if(r.success) { S.intents.unshift(r.data); toast('✅ Health report generated','success'); openIntent(r.data.id); }
+    else { console.error('[generateHealthIntent] Failed:', r.error); toast('Failed: '+(r.error||'Unknown error'),'error'); }
+  } catch(err) {
+    console.error('[generateHealthIntent] Error:', err);
+    toast('Network error — please try again','error');
+  }
 }
 window.generateHealthIntent = generateHealthIntent;
 
@@ -1722,7 +1869,7 @@ async function renderProfile() {
               <i class="fas fa-store text-violet-200 text-lg"></i>
             </div>
             <div>
-              <div class="font-bold text-lg">${esc(p.businessName||'My Business')}</div>
+              <div class="font-bold text-lg profile-header-name">${esc(p.businessName||'My Business')}</div>
               <div class="text-violet-200 text-sm">${esc(p.niche||'E-commerce')} · ${esc(p.platform||'multi')}</div>
             </div>
           </div>
@@ -1844,12 +1991,22 @@ async function renderProfile() {
 }
 
 async function saveProfile() {
+  const btn = document.querySelector('button[onclick="saveProfile()"]');
+  if(btn) { btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin mr-2"></i>Saving...'; }
+
   const getValue = id => { const el = document.getElementById(id); return el ? el.value : ''; };
   const getChecked = id => { const el = document.getElementById(id); return el ? el.checked : false; };
   const splitCSV = v => v.split(',').map(s=>s.trim()).filter(Boolean);
 
+  const businessName = getValue('p-businessName').trim();
+  if(!businessName) {
+    toast('Business name is required','warning');
+    if(btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-save mr-2"></i>Save Profile — AI agents will use your updated settings'; }
+    return;
+  }
+
   const data = {
-    businessName: getValue('p-businessName'),
+    businessName,
     ownerName: getValue('p-ownerName'),
     niche: getValue('p-niche'),
     subNiche: getValue('p-subNiche'),
@@ -1864,9 +2021,24 @@ async function saveProfile() {
     autoRejectHighRisk: getChecked('p-autoRejectHighRisk')
   };
 
-  const r = await api.patch('/business/profile', data);
-  if(r.success) { S.profile = r.data; toast('✅ Profile saved — AI agents updated','success'); }
-  else toast('Save failed','error');
+  try {
+    const r = await api.patch('/business/profile', data);
+    if(r.success) {
+      S.profile = r.data;
+      toast('✅ Profile saved — AI agents updated','success');
+      // Update profile header name immediately
+      const headerName = document.querySelector('.profile-header-name');
+      if(headerName) headerName.textContent = data.businessName;
+    } else {
+      console.error('[saveProfile] Failed:', r.error);
+      toast('Save failed: '+(r.error||'Unknown error'),'error');
+    }
+  } catch(err) {
+    console.error('[saveProfile] Error:', err);
+    toast('Network error — please try again','error');
+  } finally {
+    if(btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-save mr-2"></i>Save Profile — AI agents will use your updated settings'; }
+  }
 }
 window.saveProfile = saveProfile;
 
@@ -2553,7 +2725,7 @@ function renderOnboard2() {
           <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Pricing Strategy</label>
           <div class="grid grid-cols-3 gap-2">
             ${['aggressive','moderate','premium'].map(p=>`
-              <button onclick="selectStyle('pricing','${p}')" id="ps-${p}" class="p-2.5 rounded-xl border-2 text-xs font-semibold transition-colors ${onboardingData.pricingStyle===p?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 text-gray-500 hover:border-violet-300'}">
+              <button onclick="selectStyle('pricing','${p}')" id="ps-${p}" class="ob-btn p-2.5 rounded-xl border-2 text-xs font-semibold transition-colors cursor-pointer ${onboardingData.pricingStyle===p?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 bg-white text-gray-500'}">
                 ${p==='aggressive'?'🏷️ Aggressive':p==='moderate'?'⚖️ Moderate':'💎 Premium'}
               </button>
             `).join('')}
@@ -2563,7 +2735,7 @@ function renderOnboard2() {
           <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Risk Tolerance</label>
           <div class="grid grid-cols-3 gap-2">
             ${['conservative','balanced','aggressive'].map(r=>`
-              <button onclick="selectStyle('risk','${r}')" id="rt-${r}" class="p-2.5 rounded-xl border-2 text-xs font-semibold transition-colors ${onboardingData.riskTolerance===r?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 text-gray-500 hover:border-violet-300'}">
+              <button onclick="selectStyle('risk','${r}')" id="rt-${r}" class="ob-btn p-2.5 rounded-xl border-2 text-xs font-semibold transition-colors cursor-pointer ${onboardingData.riskTolerance===r?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 bg-white text-gray-500'}">
                 ${r==='conservative'?'🛡️ Conservative':r==='balanced'?'⚖️ Balanced':'🚀 Aggressive'}
               </button>
             `).join('')}
@@ -2588,7 +2760,7 @@ function renderOnboard3() {
       <p class="text-sm text-gray-500 mb-4">Select up to 4 categories your business focuses on. Your agents will prioritize these.</p>
       <div class="grid grid-cols-3 gap-2 mb-4">
         ${cats.map(cat=>`
-          <button onclick="toggleCategory('${cat}')" id="cat-${cat.replace(/\s+/g,'-')}" class="p-2.5 rounded-xl border-2 text-xs font-medium transition-colors ${selected.includes(cat)?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 text-gray-600 hover:border-violet-300'}">
+          <button onclick="toggleCategory('${cat}')" id="cat-${cat.replace(/\s+/g,'-')}" class="ob-btn p-2.5 rounded-xl border-2 text-xs font-medium transition-colors cursor-pointer ${selected.includes(cat)?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 bg-white text-gray-600'}">
             ${cat}
           </button>
         `).join('')}
@@ -2615,7 +2787,7 @@ function renderOnboard4() {
       <p class="text-sm text-gray-500 mb-4">What are your top priorities? Select all that apply. Your AI agents will focus on these.</p>
       <div class="grid grid-cols-2 gap-2 mb-4">
         ${goals.map(g=>`
-          <button onclick="toggleGoal('${g}')" id="goal-${g.replace(/\s+/g,'-')}" class="p-3 rounded-xl border-2 text-xs font-medium text-left transition-colors ${selected.includes(g)?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 text-gray-600 hover:border-violet-300'}">
+          <button onclick="toggleGoal('${g}')" id="goal-${g.replace(/\s+/g,'-')}" class="ob-btn p-3 rounded-xl border-2 text-xs font-medium text-left transition-colors cursor-pointer ${selected.includes(g)?'border-violet-500 bg-violet-50 text-violet-700':'border-gray-200 bg-white text-gray-600'}">
             ${g}
           </button>
         `).join('')}
@@ -2652,18 +2824,27 @@ function renderOnboard5() {
   `;
 }
 
+// Selected vs unselected class sets — static strings so Tailwind never purges them
+const OB_SEL   = 'border-violet-500 bg-violet-50 text-violet-700';
+const OB_UNSEL = 'border-gray-200 bg-white text-gray-500';
+
 function selectStyle(type, val) {
-  if(type==='pricing') {
+  if (type === 'pricing') {
     onboardingData.pricingStyle = val;
-    ['aggressive','moderate','premium'].forEach(p => {
-      const el = document.getElementById(`ps-${p}`);
-      if(el) { el.className = el.className.replace(/border-violet-500 bg-violet-50 text-violet-700|border-gray-200 text-gray-500/g,''); el.classList.add(p===val?'border-violet-500':'border-gray-200', p===val?'bg-violet-50':'','text-'+(p===val?'violet':'gray')+'-'+(p===val?'700':'500')); }
+    ['aggressive', 'moderate', 'premium'].forEach(function(p) {
+      const el = document.getElementById('ps-' + p);
+      if (!el) return;
+      // Reset to known clean base then apply state
+      el.className = 'ob-btn p-2.5 rounded-xl border-2 text-xs font-semibold transition-colors cursor-pointer '
+        + (p === val ? OB_SEL : OB_UNSEL);
     });
   } else {
     onboardingData.riskTolerance = val;
-    ['conservative','balanced','aggressive'].forEach(r => {
-      const el = document.getElementById(`rt-${r}`);
-      if(el) { el.className = el.className.replace(/border-violet-500 bg-violet-50 text-violet-700|border-gray-200 text-gray-500/g,''); el.classList.toggle('border-violet-500',r===val); el.classList.toggle('border-gray-200',r!==val); }
+    ['conservative', 'balanced', 'aggressive'].forEach(function(r) {
+      const el = document.getElementById('rt-' + r);
+      if (!el) return;
+      el.className = 'ob-btn p-2.5 rounded-xl border-2 text-xs font-semibold transition-colors cursor-pointer '
+        + (r === val ? OB_SEL : OB_UNSEL);
     });
   }
 }
@@ -2672,18 +2853,31 @@ window.selectStyle = selectStyle;
 function toggleCategory(cat) {
   onboardingData.focusCategories = onboardingData.focusCategories || [];
   const idx = onboardingData.focusCategories.indexOf(cat);
-  if(idx>=0) { onboardingData.focusCategories.splice(idx,1); } else if(onboardingData.focusCategories.length<4) { onboardingData.focusCategories.push(cat); } else { toast('Max 4 categories','warning'); return; }
-  const el = document.getElementById('cat-'+cat.replace(/\s+/g,'-'));
-  if(el) { el.classList.toggle('border-violet-500',idx<0); el.classList.toggle('bg-violet-50',idx<0); el.classList.toggle('text-violet-700',idx<0); el.classList.toggle('border-gray-200',idx>=0); el.classList.toggle('text-gray-600',idx>=0); }
+  const isNowSelected = idx < 0;
+  if (isNowSelected) {
+    if (onboardingData.focusCategories.length >= 4) { toast('Max 4 categories', 'warning'); return; }
+    onboardingData.focusCategories.push(cat);
+  } else {
+    onboardingData.focusCategories.splice(idx, 1);
+  }
+  const el = document.getElementById('cat-' + cat.replace(/\s+/g, '-'));
+  if (el) {
+    el.className = 'ob-btn p-2.5 rounded-xl border-2 text-xs font-medium transition-colors cursor-pointer '
+      + (isNowSelected ? OB_SEL : 'border-gray-200 bg-white text-gray-600');
+  }
 }
 window.toggleCategory = toggleCategory;
 
 function toggleGoal(g) {
   onboardingData.goals = onboardingData.goals || [];
   const idx = onboardingData.goals.indexOf(g);
-  if(idx>=0) { onboardingData.goals.splice(idx,1); } else { onboardingData.goals.push(g); }
-  const el = document.getElementById('goal-'+g.replace(/\s+/g,'-'));
-  if(el) { el.classList.toggle('border-violet-500',idx<0); el.classList.toggle('bg-violet-50',idx<0); el.classList.toggle('text-violet-700',idx<0); el.classList.toggle('border-gray-200',idx>=0); el.classList.toggle('text-gray-600',idx>=0); }
+  const isNowSelected = idx < 0;
+  if (isNowSelected) { onboardingData.goals.push(g); } else { onboardingData.goals.splice(idx, 1); }
+  const el = document.getElementById('goal-' + g.replace(/\s+/g, '-'));
+  if (el) {
+    el.className = 'ob-btn p-3 rounded-xl border-2 text-xs font-medium text-left transition-colors cursor-pointer '
+      + (isNowSelected ? OB_SEL : 'border-gray-200 bg-white text-gray-600');
+  }
 }
 window.toggleGoal = toggleGoal;
 
@@ -3641,5 +3835,33 @@ async function clearExpiredCache() {
 }
 window.clearExpiredCache = clearExpiredCache;
 
+// ================================================================
+// GLOBAL ERROR BOUNDARY
+// ================================================================
+window.addEventListener('unhandledrejection', function(event) {
+  console.error('[IntentIQ] Unhandled promise rejection:', event.reason);
+  // Don't show toast for silent background tasks
+  const msg = (event.reason?.message || String(event.reason) || '').toLowerCase();
+  if(!msg.includes('fetch') && !msg.includes('network')) return;
+  // Only show for user-initiated fetch failures
+  // toast('A background request failed — check your connection', 'warning');
+});
+
+window.addEventListener('error', function(event) {
+  console.error('[IntentIQ] Uncaught error:', event.message, event.filename, event.lineno);
+});
+
 // Start
-init();
+init().catch(err => {
+  console.error('[IntentIQ] Init failed:', err);
+  document.getElementById('content').innerHTML = `
+    <div class="p-8 text-center">
+      <i class="fas fa-exclamation-triangle text-4xl text-amber-400 mb-3 block"></i>
+      <div class="font-bold text-gray-700 text-lg mb-2">Failed to load</div>
+      <p class="text-gray-500 text-sm mb-4">There was a problem starting IntentIQ OS. Please refresh the page.</p>
+      <button onclick="location.reload()" class="bg-violet-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-violet-700">
+        <i class="fas fa-sync-alt mr-2"></i>Refresh Page
+      </button>
+    </div>
+  `;
+});

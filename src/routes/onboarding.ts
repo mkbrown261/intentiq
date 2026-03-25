@@ -32,9 +32,29 @@ router.get('/status', requireAuth, async (c) => {
     })
   }
 
-  const bp = await db.prepare('SELECT * FROM business_profiles WHERE user_id = ?').bind(userId).first<{
+  let bp = await db.prepare('SELECT * FROM business_profiles WHERE user_id = ?').bind(userId).first<{
     onboarding_step: number; business_name: string; niche: string
   }>()
+
+  // Auto-seed demo profile if missing (handles fresh deploys)
+  if (!bp) {
+    try {
+      await db.prepare(`
+        INSERT OR IGNORE INTO business_profiles
+          (user_id, business_name, owner_name, niche, sub_niche, platform,
+           pricing_style, risk_tolerance, monthly_revenue, monthly_budget,
+           team_size, focus_categories, top_products, preferred_ai,
+           auto_reject_high_risk, notify_urgent, onboarding_step, goals)
+        VALUES (?, 'Natural Hair Co.', 'Demo Owner', 'hair products', 'natural hair care', 'shopify',
+                'moderate', 'balanced', 8500, 5000, 'solo',
+                '["hair care","beauty accessories","styling tools"]',
+                '["Shea Moisture Curl Cream","Edge Control","Hair Oil Blend"]',
+                'hybrid', 0, 1, 5, '["increase revenue","reduce inventory costs","improve marketing"]')
+      `).bind(userId).run()
+      await db.prepare("UPDATE users SET onboarding_complete = 1 WHERE id = ?").bind(userId).run()
+      bp = { onboarding_step: 5, business_name: 'Natural Hair Co.', niche: 'hair products' }
+    } catch(_) {}
+  }
 
   return c.json({
     success: true,

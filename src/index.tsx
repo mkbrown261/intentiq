@@ -44,7 +44,7 @@ app.get('/api/health', (c) => c.json({
   philosophy: 'Guide, not execute. Suggest, not decide. Human approval required for everything.',
   aiOwnership: 'Platform-managed. Users never supply API keys.',
   agents: 7,
-  intentTypes: 21,
+  intentTypes: 22,
   features: ['D1 Database', 'Token Economy v2', 'Anti-Abuse System', 'Profit Dashboard', 'Subscription Tiers', 'Onboarding', 'Chat Assistant', 'Auth', 'Admin Panel', 'Conversion Engine', 'A/B Testing', 'Behavioral Triggers'],
   timestamp: new Date().toISOString()
 }))
@@ -147,6 +147,37 @@ const HTML = /* html */`<!DOCTYPE html>
 
 /* Safe badge */
 .safe-badge{background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);}
+
+/* Button active press state — all interactive buttons */
+button:not(:disabled):active{transform:scale(0.97);}
+button:disabled{cursor:not-allowed;opacity:0.6;}
+
+/* Input focus ring consistency */
+input:focus, select:focus, textarea:focus{
+  outline:none;
+  box-shadow:0 0 0 3px rgba(139,92,246,0.2);
+  border-color:#8b5cf6 !important;
+  transition:box-shadow 0.15s, border-color 0.15s;
+}
+
+/* Filter tab active state */
+.filter-btn{background:transparent;border:1px solid transparent;transition:all 0.15s;}
+.filter-btn:hover{background:#f3f4f6;border-color:#e5e7eb;}
+.filter-btn.active{background:white;color:#4c1d95;border-color:#ddd6fe;box-shadow:0 1px 3px rgba(0,0,0,0.1);}
+
+/* Onboarding selection buttons */
+.ob-btn{transition:all 0.15s;cursor:pointer;}
+.ob-btn:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,0.1);}
+
+/* Intent card action buttons */
+.intent-card button:not(:disabled):hover{filter:brightness(0.95);}
+
+/* Card hover */
+.card-hover{transition:transform 0.15s, box-shadow 0.15s;}
+.card-hover:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(0,0,0,0.1);}
+
+/* Loading skeleton */
+.skeleton{background:linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 50%,#f1f5f9 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:8px;}
 </style>
 </head>
 <body class="bg-slate-50 text-gray-900 h-screen overflow-hidden flex">
