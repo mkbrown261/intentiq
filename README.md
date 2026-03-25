@@ -1,6 +1,6 @@
 # IntentIQ OS — AI Business Operating System
 
-**Version:** 5.1.0  
+**Version:** 5.2.0  
 **Architecture:** Agents → Intent Layer → Human Approval → Action Layer  
 **Platform:** Cloudflare Pages + D1
 
@@ -8,7 +8,7 @@
 
 ## 🔗 URLs
 - **Production:** https://intentiq-6mp.pages.dev
-- **Latest Deploy:** https://a5362b8f.intentiq-6mp.pages.dev
+- **Latest Deploy:** https://bc61622a.intentiq-6mp.pages.dev
 - **GitHub:** https://github.com/mkbrown261/intentiq
 
 ---
@@ -179,4 +179,4 @@ npx wrangler pages deploy dist --project-name intentiq
 
 ---
 
-*Last updated: 2026-03-25 · v5.1.0 · commit 9797cdf*
+*Last updated: 2026-03-25 · v5.2.0 · commit adfbca8*
