@@ -1,223 +1,157 @@
-# IntentIQ — AI-Powered E-Commerce Automation System
+# IntentIQ OS — AI Business Operating System v3.0
 
-## Project Overview
-- **Name**: IntentIQ
-- **Goal**: Help e-commerce and reselling businesses automate analysis, research, and optimization using AI — while maintaining **100% human control**
-- **Core Rule**: This system THINKS and SUGGESTS. It NEVER acts automatically.
-- **Architecture**: Intent-Driven, Non-Destructive System
+## What It Is
+A **guided, human-in-the-loop AI operating system** for e-commerce and reselling. It is NOT a dashboard that auto-executes — it is a **COO that thinks, suggests, and waits for your approval** before anything happens.
+
+**Core rule: Agents → Intent Layer → Human Approval → Action Layer.**  
+Nothing ever executes automatically. Every recommendation is an **INTENT** that you must Approve, Modify, or Reject.
 
 ---
 
-## 🔐 Safety Architecture
+## Live URLs
+- **Production (Cloudflare Pages):** https://intentiq-6mp.pages.dev
+- **GitHub Repository:** https://github.com/mkbrown261/intentiq
+- **Sandbox Preview:** https://3000-iv45i4viageqmat5i8o31-8f57ffe2.sandbox.novita.ai
+
+---
+
+## Features Completed
+
+### Phase 1 (MVP) ✅
+- [x] Intent Layer with full Intent object (type, summary, reasoning, steps, risk, confidence, requiresApproval=TRUE)
+- [x] 21 intent types across 5 core categories
+- [x] Intent Queue with Approve / Modify / Reject buttons
+- [x] In-memory Intent DB with filtering and search
+- [x] Today's Priorities page — guided daily action plan
+- [x] Inventory Agent + Pricing Agent
+- [x] Manual human approval workflow
+
+### Phase 2 ✅
+- [x] 7 Specialized AI Agents (Market Research, Pricing, Inventory, Email Marketing, Product Creation, Business Health, Strategy)
+- [x] Workflow Engine — multi-step guided business processes (New Product Launch, Inventory Restock, Monthly Marketing Sprint)
+- [x] Scheduling Engine — 8 pre-configured recurring tasks (daily, weekly, monthly, quarterly)
+- [x] Email Marketing Agent + Market Research Agent
+- [x] Business Health Score with area scoring (Inventory, Pricing, Marketing, Products, Operations)
+- [x] Agent Control Center — enable/disable agents, view stats
+- [x] AI routing: Claude for long-form reasoning, OpenAI for structured output
+- [x] Demo Mode — full functionality without API keys
+
+### Phase 2.5 ✅ (This Release)
+- [x] Full Guided UI — intent cards with "Why This Matters" blocks, step previews, confidence bars
+- [x] Dashboard with business insights, health ring, quick-generate grid
+- [x] Intent Queue with filtering (all/pending/approved/rejected/modified) and search
+- [x] Workflow Engine UI — progress bars, step-by-step execution, run/delete
+- [x] Schedule Manager UI — run now, pause/enable, create/delete schedules
+- [x] Business Health full report — score ring, area scores, health alerts
+- [x] Business Profile form — personalize niche, pricing style, risk tolerance, top products
+- [x] Personalization engine — tracks approval patterns per intent type
+- [x] Agent Logs page — real-time activity feed
+- [x] Batch approve all low-risk intents
+- [x] Auto-seed 3 initial intents on first load
+
+---
+
+## Architecture
 
 ```
-User Request → AI Router → Claude/OpenAI → Intent Generator → Intent Store → USER REVIEW
-                                                                              ↓
-                                                              [Approve] [Modify] [Reject]
-                                                                              ↓
-                                                              Manual execution (your choice)
+Agents (7) → Intent Layer → Human Approval Gate → Action Layer (untouched)
 ```
 
-**ACTION LAYER: ████ NEVER TOUCHED ████**
-- No automatic pricing changes
-- No automatic email sending
-- No automatic purchases
-- No external execution without approval
+**Safe Mode:** `requiresApproval: true` is hardcoded on every Intent object — it cannot be set to false.
 
 ---
 
-## ✅ Completed Features
+## 7 AI Agents
 
-### Part 1: AI Integration Layer
-- **Claude (Anthropic)**: Deep reasoning, market analysis, email drafts, opportunity identification
-- **OpenAI GPT-4o**: Structured outputs, competitor scans, inventory analysis
-- **Hybrid mode**: Both models consulted; Claude synthesizes final intent
-- **Auto-fallback**: If primary model fails, automatically switches to secondary
-
-### Part 2: Intent Layer (Core System)
-Every AI output is a structured INTENT with:
-- `type`: 12 intent types supported
-- `summary`: Human-readable one-liner
-- `detailedBreakdown`: Full analysis
-- `suggestedActions`: 3-5 specific, prioritized actions
-- `riskLevel`: low / medium / high
-- `requiresApproval: true` — immutable, always true
-- `guidance`: Why this matters + What to do next + Expected outcome
-
-### Part 3: Scheduling System
-- Daily, Weekly, Bi-weekly, Monthly frequencies
-- Pre-seeded defaults: Daily competitor scan, Wednesday market analysis, Saturday product review
-- Manual "Run Now" button on each schedule
-- Auto-polling every 5 minutes to check for due tasks
-
-### Part 4: Market Research Engine
-- Market analysis with trend detection
-- Competitor scanning with gap analysis
-- Trend reports with rising/declining signals
-- Opportunity alerts with estimated value
-
-### Part 5: Product Analysis & Pricing
-- Pricing review with competitor comparison
-- Risk-aware price adjustment recommendations
-- Bundle strategy suggestions
-- Product creation ideas with descriptions
-
-### Part 6: Email Automation (Safe Mode)
-- Email draft generation (subject lines, body, CTA)
-- Campaign suggestions with timing recommendations
-- All drafts require explicit approval before sending
-
-### Part 7: Buy/Sell Organization
-- Inventory action analysis with restock urgency
-- Slow-mover identification
-- Restock alerts with cash flow impact
-
-### Part 8: Product Creation
-- New product idea generation
-- Digital product suggestions
-- Bundle opportunity identification
-- Product descriptions
-
-### Part 9: User Guidance System
-Every intent includes step-by-step guidance:
-1. **Why This Matters** — business impact explanation
-2. **What To Do Next** — specific next action
-3. **Expected Outcome** — quantified result
-
-### Part 10: Human Verification Layer
-- [Approve] — marks intent as approved, user executes manually
-- [Modify] — add a modification note before approving
-- [Reject] — archives the intent
-- High-risk intents trigger a confirmation dialog
-- "Approve All Low Risk" batch action available
-
-### Part 11: UI/UX
-- Sidebar navigation with live pending count badge
-- Intent cards with risk color coding (red/amber/green)
-- Priority indicators (1-5 dots)
-- Detailed intent modal with full guidance
-- Dashboard with stats, quick generate, recent intents
-- Schedule manager with calendar UI
-- AI Routing visualization table
-- Business profile personalization
-- Toast notifications
-- Shimmer loading states
-
-### Part 12: Safety Rules
-- `requiresApproval: true` is hardcoded and immutable
-- No API calls executed without user trigger
-- No financial operations in code
-- Demo mode works without any API keys
-
-### Part 13: Personalization
-- Business profile: niche, pricing style, focus categories
-- AI uses profile context in every prompt
-- More specific profile = more relevant intents
-
-### Part 14: Performance
-- Non-blocking UI with async operations
-- Background polling every 5 minutes
-- In-memory store (upgradeable to Cloudflare D1)
-- PM2 process management
+| Agent | Routing | Intent Types |
+|-------|---------|-------------|
+| Market Research | Claude (reasoning) | market_trend, market_opportunity, competitor_alert, seasonality_alert |
+| Pricing | Hybrid | pricing_adjust, pricing_bundle, pricing_discount, financial_insight |
+| Inventory | OpenAI (structured) | inventory_restock, inventory_liquidate, performance_alert |
+| Email Marketing | Claude | email_campaign, email_abandoned_cart, email_reengagement, customer_segment |
+| Product Creation | Claude | product_create, product_bundle, product_variation |
+| Business Health | Hybrid | business_health, performance_alert, financial_insight |
+| Strategy | Claude | strategy_review, workflow_suggestion, ad_optimization |
 
 ---
 
-## 🌐 URLs
+## API Endpoints
 
-- **Production (Cloudflare Pages)**: https://intentiq-6mp.pages.dev
-- **GitHub Repo**: https://github.com/mkbrown261/intentiq
-- **Health Check**: https://intentiq-6mp.pages.dev/api/health
-
----
-
-## 📡 API Reference
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | System health check |
-| GET | `/api/intents` | All intents (filterable by status, type) |
-| GET | `/api/intents/stats` | Dashboard statistics |
-| GET | `/api/intents/pending` | Pending intents only |
-| GET | `/api/intents/:id` | Single intent detail |
-| POST | `/api/intents/generate` | Generate new AI intent |
-| PATCH | `/api/intents/:id` | Approve/Reject/Modify intent |
-| DELETE | `/api/intents/:id` | Delete intent |
-| GET | `/api/schedules` | All schedules |
-| POST | `/api/schedules` | Create new schedule |
-| PATCH | `/api/schedules/:id` | Update schedule |
-| POST | `/api/schedules/:id/run` | Manually run schedule now |
-| POST | `/api/schedules/run-due` | Process all due tasks |
-| DELETE | `/api/schedules/:id` | Delete schedule |
-| GET | `/api/profile` | Get business profile |
-| PATCH | `/api/profile` | Update business profile |
-
-### Intent Types
-`market_analysis` · `pricing_update` · `product_creation` · `email_draft` · `inventory_action` · `competitor_scan` · `trend_report` · `bundle_suggestion` · `restock_alert` · `campaign_suggestion` · `performance_review` · `opportunity_alert`
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/health | System health check |
+| GET | /api/intents | List all intents (filterable) |
+| GET | /api/intents/stats | Dashboard statistics |
+| POST | /api/intents/generate | Generate new intent from agent |
+| PATCH | /api/intents/:id | Approve / Reject / Modify intent |
+| GET | /api/agents | List all agents |
+| PATCH | /api/agents/:id | Toggle agent active/inactive |
+| GET | /api/workflows | List workflows |
+| POST | /api/workflows/:id/run-step | Run next workflow step |
+| GET | /api/schedules | List schedules |
+| POST | /api/schedules/:id/run | Manually trigger a schedule |
+| POST | /api/schedules/run-due | Process all due schedules |
+| GET | /api/business/profile | Get business profile |
+| PATCH | /api/business/profile | Update profile |
+| GET | /api/business/health-score | Get health score |
+| GET | /api/business/insights | Get business insights |
+| GET | /api/business/logs | Get agent activity logs |
 
 ---
 
-## 🤖 AI Configuration
+## UI Navigation
 
-Add API keys to production via Cloudflare secrets:
-```bash
-npx wrangler pages secret put ANTHROPIC_API_KEY --project-name webapp
-npx wrangler pages secret put OPENAI_API_KEY --project-name webapp
-```
-
-For local dev, create `.dev.vars`:
-```
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-```
-
-**Without API keys**: System runs in Demo Mode with rich pre-built intent examples.
+- **Today's Priorities** — Guided daily action plan (urgent → high → other)
+- **Dashboard** — Stats, insights, health ring, quick-generate buttons
+- **Intent Queue** — All intents with filter/search, batch approval
+- **Agent Control** — Enable/disable agents, generate from any agent
+- **Generate Intent** — Pick agent + type + context, get instant analysis
+- **Workflows** — Multi-step guided processes with step execution
+- **Schedules** — Recurring AI tasks with run/pause/create
+- **Health Score** — Business health ring, area scores, alerts
+- **Business Profile** — Personalization settings for AI agents
+- **Agent Logs** — Real-time activity feed
 
 ---
 
-## 🛠️ Tech Stack
+## Using Real AI (Optional)
 
-- **Backend**: Hono v4 + TypeScript
-- **Runtime**: Cloudflare Pages/Workers
-- **Frontend**: Vanilla JS + Tailwind CSS (CDN)
-- **AI**: Anthropic Claude 3.5 Haiku + OpenAI GPT-4o Mini
-- **Build**: Vite + @hono/vite-build
-- **Process**: PM2
-- **Storage**: In-memory (upgradeable to Cloudflare D1)
-
----
-
-## 🚀 Deployment
+In demo mode, rich sample intents are generated automatically. To enable real Claude/OpenAI:
 
 ```bash
-# Local dev
-npm run build && pm2 start ecosystem.config.cjs
+# For Cloudflare Pages (production)
+npx wrangler pages secret put ANTHROPIC_API_KEY --project-name intentiq
+npx wrangler pages secret put OPENAI_API_KEY --project-name intentiq
+npm run build && npx wrangler pages deploy dist --project-name intentiq
 
-# Deploy to Cloudflare Pages
-npm run deploy
+# For local development
+echo "ANTHROPIC_API_KEY=your-key" >> .dev.vars
+echo "OPENAI_API_KEY=your-key" >> .dev.vars
+pm2 restart intentiq
 ```
 
 ---
 
-## 📋 Recommended Next Steps
-
-1. **Add API keys** — Connect real Anthropic/OpenAI for live AI analysis
-2. **Cloudflare D1** — Replace in-memory store with persistent SQLite database
-3. **Real market data** — Connect to product search APIs for real competitor data
-4. **Email integration** — Connect to SendGrid/Mailgun to execute approved email drafts
-5. **Webhook support** — Trigger intents from external events (Shopify, WooCommerce)
-6. **Export to CSV** — Allow exporting approved intents as action checklists
-
----
-
-## 📊 Data Architecture
-
-- **Intent Model**: Full structured type with guidance, risk, actions, metadata
-- **Schedule Model**: Frequency + day + hour + AI model routing
-- **User Profile**: Niche, pricing style, categories, budget, AI preference
-- **Storage**: In-memory Map (server restart resets — upgrade to D1 for persistence)
+## Phase 3 Roadmap (Not Yet Built)
+- [ ] Shopify integration (real product/order data)
+- [ ] Forecasting engine (ML-based demand prediction)
+- [ ] Ads optimization agent (Google/Meta)
+- [ ] Financial insights agent (P&L, margins)
+- [ ] Multi-store support
+- [ ] Mobile app (React Native)
+- [ ] Customer segmentation deep analysis
+- [ ] Cloudflare D1 persistence (currently in-memory)
 
 ---
 
-**Deployment Status**: ✅ Active  
-**Last Updated**: 2026-03-25  
-**Version**: 1.0.0
+## Tech Stack
+- **Backend:** Hono v4 + TypeScript on Cloudflare Workers
+- **Frontend:** Vanilla JS + Tailwind CSS (CDN) + Font Awesome
+- **Build:** Vite + @hono/vite-cloudflare-pages
+- **Storage:** In-memory Maps (upgrade to Cloudflare D1 for persistence)
+- **AI:** Anthropic Claude 3.5 Haiku + OpenAI GPT-4o Mini (with demo fallback)
+- **Deployment:** Cloudflare Pages
+
+---
+
+*Last updated: 2026-03-25 · IntentIQ OS v3.0*
